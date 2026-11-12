@@ -12,7 +12,6 @@ const next = spawn("npx", ["next", "start", "-p", PORT], {
   env: {
     ...process.env,
     MONGODB_URI: mongod.getUri("clinic_e2e"),
-    ENABLE_DEV_SEED: "true", // lets the test load the demo data into this throwaway DB
   },
 });
 

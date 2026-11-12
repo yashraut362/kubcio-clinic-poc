@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4B5563"/>
+    </marker>
+    <style>
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .subtitle { font-size: 17px; fill: #6B7280; }
+      .layer { font-size: 20px; font-weight: 700; }
+      .layer-note { font-size: 15px; fill: #6B7280; }
+      .card-title { font-size: 17px; font-weight: 650; fill: #111827; }
+      .text { font-size: 15px; fill: #374151; }
+      .muted { font-size: 14px; fill: #6B7280; }
+      .mono { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 14px; fill: #111827; }
+      .mono-muted { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 14px; fill: #6B7280; }
+      .method { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; font-weight: 700; }
+      .label { font-size: 15px; font-weight: 600; fill: #374151; }
+      .card { fill: #FFFFFF; stroke: #E5E7EB; stroke-width: 1.5; }
+      .step-num { font-size: 14px; font-weight: 700; fill: #FFFFFF; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1080" fill="#FFFFFF"/>
+
+  <!-- Title -->
+  <text x="60" y="58" class="title">Clinic POC: architecture</text>
+  <text x="60" y="86" class="subtitle">Next.js 16 app (UI + API in one project) · MongoDB · all patient data is synthetic</text>
+
+  <!-- ============ Layer 1: Browser ============ -->
+  <rect x="60" y="110" width="1480" height="250" rx="18" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
+  <text x="88" y="146" class="layer" fill="#1D4ED8">Browser</text>
+  <text x="182" y="146" class="layer-note">React client components · shadcn/ui</text>
+
+  <!-- Role selector -->
+  <rect x="88" y="166" width="300" height="170" rx="12" class="card"/>
+  <text x="110" y="198" class="card-title">"Viewing as" role selector</text>
+  <text x="110" y="226" class="text">Reception · Nurse · Doctor</text>
+  <text x="110" y="252" class="muted">No login: a demo shortcut.</text>
+  <text x="110" y="274" class="muted">Saved in localStorage.</text>
+  <text x="110" y="314" class="mono-muted">lib/role.ts</text>
+
+  <!-- Screens -->
+  <rect x="412" y="166" width="580" height="170" rx="12" class="card"/>
+  <text x="434" y="198" class="card-title">Screens</text>
+  <rect x="434" y="214" width="170" height="104" rx="10" fill="#F9FAFB" stroke="#E5E7EB"/>
+  <text x="450" y="242" class="label">Today's visits</text>
+  <text x="450" y="268" class="muted">Kanban board</text>
+  <text x="450" y="290" class="muted">+ visit panel</text>
+  <rect x="616" y="214" width="170" height="104" rx="10" fill="#F9FAFB" stroke="#E5E7EB"/>
+  <text x="632" y="242" class="label">Patients</text>
+  <text x="632" y="268" class="muted">Search, add,</text>
+  <text x="632" y="290" class="muted">check in</text>
+  <rect x="798" y="214" width="170" height="104" rx="10" fill="#F9FAFB" stroke="#E5E7EB"/>
+  <text x="814" y="242" class="label">Studies</text>
+  <text x="814" y="268" class="muted">Doctor review queue,</text>
+  <text x="814" y="290" class="muted">reception call list</text>
+
+  <!-- TanStack Query -->
+  <rect x="1016" y="166" width="496" height="170" rx="12" class="card"/>
+  <text x="1038" y="198" class="card-title">TanStack Query</text>
+  <text x="1038" y="226" class="text">One hook per endpoint</text>
+  <text x="1038" y="250" class="text">Cache keyed by role (responses differ by role)</text>
+  <text x="1038" y="274" class="text">Refreshes affected lists after every change</text>
+  <text x="1038" y="298" class="text">Board polls every 15 s to show other staff's moves</text>
+  <text x="1038" y="324" class="mono-muted">lib/queries.ts</text>
+
+  <!-- Arrow browser -> API -->
+  <line x1="560" y1="362" x2="560" y2="430" stroke="#4B5563" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="578" y="392" class="label">HTTP + JSON</text>
+  <text x="578" y="414" class="muted">every request carries the x-staff-role header</text>
+
+  <!-- ============ Layer 2: Server ============ -->
+  <rect x="60" y="434" width="1012" height="340" rx="18" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="2"/>
+  <text x="88" y="470" class="layer" fill="#6D28D9">API</text>
+  <text x="134" y="470" class="layer-note">Next.js route handlers in app/api</text>
+
+  <!-- Endpoints -->
+  <rect x="88" y="490" width="470" height="262" rx="12" class="card"/>
+  <text x="110" y="520" class="card-title">Endpoints</text>
+  <g>
+    <text x="110" y="550" class="method" fill="#047857">GET</text>   <text x="172" y="550" class="mono">/api/visits</text>             <text x="404" y="550" class="muted">board</text>
+    <text x="110" y="571" class="method" fill="#1D4ED8">POST</text>  <text x="172" y="571" class="mono">/api/visits</text>             <text x="404" y="571" class="muted">check in</text>
+    <text x="110" y="592" class="method" fill="#047857">GET</text>   <text x="172" y="592" class="mono">/api/visits/:id</text>         <text x="404" y="592" class="muted">visit detail</text>
+    <text x="110" y="613" class="method" fill="#B45309">PATCH</text> <text x="172" y="613" class="mono">/api/visits/:id</text>         <text x="404" y="613" class="muted">handoff step</text>
+    <text x="110" y="634" class="method" fill="#047857">GET</text>   <text x="172" y="634" class="mono">/api/patients?q=</text>        <text x="404" y="634" class="muted">search</text>
+    <text x="110" y="655" class="method" fill="#1D4ED8">POST</text>  <text x="172" y="655" class="mono">/api/patients</text>           <text x="404" y="655" class="muted">new patient</text>
+    <text x="110" y="676" class="method" fill="#047857">GET</text>   <text x="172" y="676" class="mono">/api/studies</text>
+    <text x="110" y="697" class="method" fill="#047857">GET</text>   <text x="172" y="697" class="mono">/api/studies/:id/matches</text>
+    <text x="110" y="718" class="method" fill="#1D4ED8">POST</text>  <text x="172" y="718" class="mono">/api/studies/:id/screen</text>
+    <text x="110" y="739" class="method" fill="#B45309">PATCH</text> <text x="172" y="739" class="mono">/api/matches/:id</text>        <text x="404" y="739" class="muted">review · call</text>
+  </g>
+
+  <!-- Request pipeline -->
+  <rect x="580" y="490" width="470" height="262" rx="12" class="card"/>
+  <text x="602" y="520" class="card-title">Every request</text>
+  <g>
+    <circle cx="616" cy="550" r="13" fill="#7C3AED"/><text x="616" y="555" class="step-num" text-anchor="middle">1</text>
+    <text x="640" y="548" class="label">Connect to DB, catch errors</text>
+    <text x="640" y="567" class="muted">any error becomes JSON + an HTTP status</text>
+
+    <circle cx="616" cy="598" r="13" fill="#7C3AED"/><text x="616" y="603" class="step-num" text-anchor="middle">2</text>
+    <text x="640" y="596" class="label">Check the role</text>
+    <text x="640" y="615" class="muted">x-staff-role header · 401 / 403</text>
+
+    <circle cx="616" cy="646" r="13" fill="#7C3AED"/><text x="616" y="651" class="step-num" text-anchor="middle">3</text>
+    <text x="640" y="644" class="label">Validate the body (zod)</text>
+    <text x="640" y="663" class="muted">bad input · 400 / 422</text>
+
+    <circle cx="616" cy="694" r="13" fill="#7C3AED"/><text x="616" y="699" class="step-num" text-anchor="middle">4</text>
+    <text x="640" y="692" class="label">Apply the business rules</text>
+    <text x="640" y="711" class="muted">right role, right stage · 403 / 409</text>
+
+    <circle cx="616" cy="738" r="13" fill="#7C3AED"/><text x="616" y="743" class="step-num" text-anchor="middle">5</text>
+    <text x="640" y="743" class="label">Shape the response by role</text>
+  </g>
+
+  <!-- ============ Shared rules ============ -->
+  <rect x="1112" y="434" width="428" height="340" rx="18" fill="#FFFBEB" stroke="#FCD34D" stroke-width="2"/>
+  <text x="1140" y="470" class="layer" fill="#B45309">Shared rules</text>
+  <text x="1140" y="494" class="layer-note">pure functions in lib/, no database</text>
+
+  <rect x="1140" y="510" width="372" height="66" rx="10" class="card"/>
+  <text x="1160" y="537" class="mono">operations.ts</text>
+  <text x="1160" y="560" class="muted">Who can do what, at which visit stage</text>
+
+  <rect x="1140" y="588" width="372" height="66" rx="10" class="card"/>
+  <text x="1160" y="615" class="mono">study-matcher.ts</text>
+  <text x="1160" y="638" class="muted">6 matching rules + screening</text>
+
+  <rect x="1140" y="666" width="372" height="66" rx="10" class="card"/>
+  <text x="1160" y="693" class="mono">types.ts</text>
+  <text x="1160" y="716" class="muted">Data shapes shared by UI and API</text>
+
+  <text x="1140" y="756" class="muted">Also tested directly by the unit tests</text>
+
+  <!-- Arrow pipeline -> rules -->
+  <line x1="1074" y1="621" x2="1110" y2="621" stroke="#4B5563" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="1092" y="607" class="label" text-anchor="middle">uses</text>
+
+  <!-- Arrow API -> DB -->
+  <line x1="560" y1="776" x2="560" y2="840" stroke="#4B5563" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="578" y="806" class="label">Mongoose</text>
+  <text x="578" y="828" class="muted">models in lib/models.ts</text>
+
+  <!-- ============ Layer 3: MongoDB ============ -->
+  <rect x="60" y="844" width="1480" height="178" rx="18" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/>
+  <text x="88" y="880" class="layer" fill="#047857">MongoDB</text>
+  <text x="190" y="880" class="layer-note">4 collections · related records stored inside their parent document</text>
+
+  <rect x="88" y="896" width="346" height="110" rx="12" class="card"/>
+  <text x="108" y="924" class="mono">patients</text>
+  <text x="108" y="950" class="muted">name · phone (unique) · date of birth</text>
+  <text x="108" y="972" class="muted">diagnoses · medications · allergies</text>
+
+  <rect x="452" y="896" width="346" height="110" rx="12" class="card"/>
+  <text x="472" y="924" class="mono">visits</text>
+  <text x="472" y="950" class="muted">patient → · reason · stage</text>
+  <text x="472" y="972" class="muted">vitals · doctor notes · follow-up · test</text>
+
+  <rect x="816" y="896" width="346" height="110" rx="12" class="card"/>
+  <text x="836" y="924" class="mono">studies</text>
+  <text x="836" y="950" class="muted">name · description · active</text>
+
+  <rect x="1180" y="896" width="332" height="110" rx="12" class="card"/>
+  <text x="1200" y="924" class="mono">studymatches</text>
+  <text x="1200" y="950" class="muted">patient → · study → · status · evidence</text>
+  <text x="1200" y="972" class="muted">contact status · consent (kept separate)</text>
+
+  <!-- Footer: tests -->
+  <text x="60" y="1056" class="muted">Tests: Vitest unit (rules) · Vitest API (in-memory MongoDB) · Playwright browser (full visit + study flow). Demo reset: POST /api/dev/seed reloads the synthetic data.</text>
+</svg>

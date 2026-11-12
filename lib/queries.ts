@@ -193,7 +193,7 @@ export function usePatchMatch() {
   );
 }
 
-/** POST /api/dev/seed (development only) */
+/** POST /api/dev/seed: wipes and reloads the synthetic demo data */
 export function useResetDemo() {
   const qc = useQueryClient();
   return useMutation({

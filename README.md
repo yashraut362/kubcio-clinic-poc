@@ -15,11 +15,11 @@ cp .env.example .env.local
 npm run dev
 
 # 4. In a second terminal: load the synthetic demo data
-#    (wipes and reloads the 4 clinic collections; works in development only)
+#    (wipes and reloads the 4 clinic collections)
 curl -X POST http://localhost:3000/api/dev/seed
 ```
 
-Instead of step 4, you can click **Reset demo data** in the app's footer. Then pick a role with **Viewing as** in the top bar.
+Instead of step 4, you can click **Reset demo data** in the app's footer. It asks for confirmation, then reloads the demo data. Then pick a role with **Viewing as** in the top bar.
 
 ```bash
 # Tests (use a throwaway in-memory MongoDB, never your real database)
@@ -29,8 +29,27 @@ npm run test:e2e                    # builds the app, then runs the browser test
 
 # Checks and production build
 npm run lint
-npm run build && npm start          # the seed endpoint is disabled in production
+npm run build && npm start
 ```
+
+### Deploying to Vercel
+
+1. Import the repo in Vercel and add `MONGODB_URI` as an environment variable.
+2. In MongoDB Atlas, under **Network Access**, allow access from anywhere (`0.0.0.0/0`), because Vercel doesn't use fixed IP addresses.
+3. After deploying, open the app and click **Reset demo data** in the footer to load the demo patients.
+
+**Reset demo data** works on Vercel too, so reviewers can start from a clean demo. Anyone with the link can use it, and it resets the data for everyone. That's acceptable only because the database holds synthetic data. Remove or protect `POST /api/dev/seed` before the app ever holds real patient data.
+
+## Architecture
+
+![Clinic POC architecture: browser, API, shared rules and MongoDB](docs/architecture.png)
+
+- **Browser:** three screens plus a "Viewing as" role selector. TanStack Query calls the API and sends the role in the `x-staff-role` header.
+- **API:** Next.js route handlers in `app/api`. Every request checks the role, validates the body with zod, applies the business rules and returns only what that role may see.
+- **Shared rules:** plain functions in `lib/` with no database access. `operations.ts` says who can do what at each visit stage, and `study-matcher.ts` holds the 6 matching rules. The unit tests call them directly.
+- **MongoDB:** 4 collections (`patients`, `visits`, `studies`, `studymatches`) through Mongoose. Vitals, notes and follow-ups are stored inside the visit; evidence, contact status and consent inside the study match.
+
+The editable source of the diagram is [docs/architecture.svg](docs/architecture.svg).
 
 ---
 
@@ -48,7 +67,7 @@ All data is **synthetic**. These are fictional patients, not real people.
 | 1. Install | `npm install` |
 | 2. Database | Put your MongoDB connection string in `.env.local` as `MONGODB_URI=...` (see `.env.example`) |
 | 3. Start | `npm run dev`, then open http://localhost:3000 |
-| 4. Load demo data | Click **Reset demo data** in the footer (development only; wipes and reloads the data) |
+| 4. Load demo data | Click **Reset demo data** in the footer (asks to confirm, then wipes and reloads the data) |
 | 5. Tests | See [Tests](#tests) |
 
 There's no login. Pick a role with **Viewing as** in the top bar. The server still checks what each role is allowed to do.

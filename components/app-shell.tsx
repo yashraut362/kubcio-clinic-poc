@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { toast } from "sonner";
@@ -16,6 +17,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const NAV = [
@@ -29,12 +39,11 @@ const ROLE_ITEMS = (Object.keys(ROLE_LABEL) as Role[]).map((r) => ({
   label: ROLE_LABEL[r],
 }));
 
-const IS_DEV = process.env.NODE_ENV !== "production";
-
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const role = useRole();
   const reset = useResetDemo();
+  const [confirmReset, setConfirmReset] = useState(false);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -89,21 +98,47 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6">{children}</main>
 
       <footer className="border-t py-3 text-center text-xs text-muted-foreground">
-        Prototype · synthetic data only · no real patients
-        {IS_DEV && (
-          <>
-            {" · "}
-            <button
-              type="button"
-              disabled={reset.isPending}
-              className="underline underline-offset-2 hover:text-foreground disabled:opacity-50"
-              onClick={() => reset.mutate(undefined, { onSuccess: () => toast("Demo data reset") })}
-            >
-              {reset.isPending ? "Resetting…" : "Reset demo data"}
-            </button>
-          </>
-        )}
+        Prototype · synthetic data only · no real patients ·{" "}
+        <button
+          type="button"
+          disabled={reset.isPending}
+          className="underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+          onClick={() => setConfirmReset(true)}
+        >
+          {reset.isPending ? "Resetting…" : "Reset demo data"}
+        </button>
       </footer>
+
+      <Dialog open={confirmReset} onOpenChange={setConfirmReset}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset demo data?</DialogTitle>
+            <DialogDescription>
+              This replaces all patients, visits and study matches with the original synthetic demo
+              data. Everyone using this app sees the reset.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmReset(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={reset.isPending}
+              onClick={() =>
+                reset.mutate(undefined, {
+                  onSuccess: () => {
+                    setConfirmReset(false);
+                    toast.success("Demo data reset");
+                  },
+                })
+              }
+            >
+              {reset.isPending ? "Resetting…" : "Reset data"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

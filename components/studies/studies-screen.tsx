@@ -33,7 +33,7 @@ export function StudiesScreen() {
 
   const study = studies.data.find((s) => s.active) ?? studies.data[0];
   if (!study) {
-    return <Empty text="No studies yet. In development, use “Reset demo data” in the footer to load the example study." />;
+    return <Empty text="No studies yet. Use “Reset demo data” in the footer to load the example study." />;
   }
 
   return (

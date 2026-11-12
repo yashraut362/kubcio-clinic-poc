@@ -1,19 +1,16 @@
 import { Types } from "mongoose";
-import { ApiError, route } from "@/lib/api";
+import { route } from "@/lib/api";
 import { PatientModel, StudyMatchModel, StudyModel, VisitModel } from "@/lib/models";
 import { createSeedData } from "@/lib/seed-data";
 
 /**
- * POST /api/dev/seed  (development only, not part of the LLD API)
+ * POST /api/dev/seed  (demo helper, not part of the LLD API)
  * Wipes the 4 collections and loads the synthetic demo data. All people are fictional.
- * Disabled in production unless ENABLE_DEV_SEED=true (used by the e2e test server,
- * which runs against a throwaway in-memory database).
+ * Enabled everywhere, including the Vercel deployment, so reviewers can reset the demo
+ * from the footer. Open to anyone by design: the database only ever holds synthetic data.
+ * Remove or protect this route before the app holds real patient data.
  */
 export const POST = route(async () => {
-  if (process.env.NODE_ENV === "production" && process.env.ENABLE_DEV_SEED !== "true") {
-    throw new ApiError(404, "Not found.");
-  }
-
   const s = createSeedData(new Date());
   // Seed data uses readable keys ("p-maria"); give each one a stable ObjectId.
   // ISO date strings are cast to Date by Mongoose.
