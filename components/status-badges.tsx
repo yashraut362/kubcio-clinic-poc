@@ -1,7 +1,7 @@
 import { CalendarClock, FlaskConical, Phone, PhoneOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CONSENT_LABEL, CONTACT_LABEL } from "@/lib/format";
-import type { Consent, ContactStatus, Role, StudyMatch } from "@/lib/types";
+import type { Consent, ContactStatus, MatchStatus, StudyFlag } from "@/lib/types";
 
 const base =
   "inline-flex h-5 w-fit shrink-0 items-center gap-1 rounded-full border px-2 text-xs font-medium whitespace-nowrap [&>svg]:size-3";
@@ -27,32 +27,27 @@ export function Pill({
   return <span className={cn(base, TONE[tone], className)}>{children}</span>;
 }
 
-/**
- * Study flag on a visit card / panel.
- * Doctors see unreviewed flags; everyone else only sees a flag once a doctor confirmed it.
- */
-export function studyFlag(match: StudyMatch | undefined, role: Role) {
-  if (!match || match.status === "rejected") return null;
-  if (match.status === "confirmed") return { label: "Study: doctor-confirmed", tone: "violet" as const };
-  if (role !== "doctor") return null;
-  return match.status === "needs_checking"
-    ? { label: "Study: needs checking", tone: "amber" as const }
-    : { label: "Study: possible match", tone: "blue" as const };
-}
+const FLAG: Record<MatchStatus, { label: string; tone: keyof typeof TONE } | null> = {
+  possible_match: { label: "Study: possible match", tone: "blue" },
+  needs_checking: { label: "Study: needs checking", tone: "amber" },
+  confirmed: { label: "Study: doctor-confirmed", tone: "violet" },
+  rejected: null,
+};
 
-export function StudyFlagPill({ match, role }: { match: StudyMatch | undefined; role: Role }) {
-  const flag = studyFlag(match, role);
-  if (!flag) return null;
+/** The API already decides which flags each role may see; this only renders it. */
+export function StudyFlagPill({ flag }: { flag: StudyFlag }) {
+  const f = flag && FLAG[flag.status];
+  if (!f) return null;
   return (
-    <Pill tone={flag.tone}>
+    <Pill tone={f.tone}>
       <FlaskConical aria-hidden />
-      {flag.label}
+      {f.label}
     </Pill>
   );
 }
 
-export function MatchStatusPill({ match }: { match: StudyMatch }) {
-  switch (match.status) {
+export function MatchStatusPill({ status }: { status: MatchStatus }) {
+  switch (status) {
     case "needs_checking":
       return <Pill tone="amber">Needs checking</Pill>;
     case "possible_match":
@@ -88,4 +83,16 @@ export function ConsentPill({ consent }: { consent: Consent }) {
   const tone =
     consent === "consented" ? "green" : consent === "declined" ? "red" : consent === "undecided" ? "amber" : "neutral";
   return <Pill tone={tone}>Consent: {CONSENT_LABEL[consent]}</Pill>;
+}
+
+/** Inline error with a retry button for failed queries. */
+export function QueryError({ error, onRetry }: { error: Error; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+      <span className="text-destructive">{error.message}</span>
+      <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">
+        Try again
+      </button>
+    </div>
+  );
 }

@@ -71,10 +71,42 @@ export interface StudyMatch {
   consent: Consent;
 }
 
-export interface ClinicState {
-  role: Role;
-  patients: Patient[];
-  visits: Visit[];
-  studies: Study[];
-  matches: StudyMatch[];
-}
+// ---------- API response shapes (see app/api/**). Several are trimmed by role. ----------
+
+export type PatientSummary = Pick<Patient, "id" | "name" | "phone" | "dateOfBirth">;
+
+/** Study flag on a visit. Doctors get the details; other roles only see confirmed flags. */
+export type StudyFlag = {
+  id: string;
+  status: StudyMatch["status"];
+  evidence?: string;
+  reason?: string;
+  missingInfo?: string[];
+} | null;
+
+type VisitCore = Pick<
+  Visit,
+  "id" | "patientId" | "reason" | "stage" | "followUp" | "testOrdered" | "checkedInAt"
+>;
+
+/** GET /api/visits */
+export type BoardVisit = VisitCore & { patient: PatientSummary | null; studyFlag: StudyFlag };
+
+/** GET /api/visits/:id — reception gets the core fields; nurse/doctor get everything. */
+export type VisitDetail = {
+  visit: VisitCore & Partial<Pick<Visit, "vitals" | "doctorNotes">>;
+  patient: PatientSummary & Partial<Pick<Patient, "diagnoses" | "medications" | "allergies">>;
+  previousVitals?: { checkedInAt: string; vitals: Vitals }[];
+  studyFlag: StudyFlag;
+};
+
+/** GET /api/studies/:id/matches as a doctor. */
+export type DoctorMatch = StudyMatch & { patient: { id: string; name: string; age: number | null } };
+
+/** GET /api/studies/:id/matches as reception (confirmed only, no clinical evidence). */
+export type ReceptionMatch = Pick<StudyMatch, "id" | "status" | "contactStatus" | "consent"> & {
+  patient: { id: string; name: string; phone: string };
+};
+
+/** POST /api/studies/:id/screen */
+export type ScreenResult = { screened: number; awaitingReview: number; reviewed: number; removed: number };

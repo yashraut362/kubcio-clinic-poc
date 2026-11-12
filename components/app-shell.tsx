@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { toast } from "sonner";
 import { Stethoscope } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { resetDemo, setRole, useClinic } from "@/lib/clinic-store";
+import { setRole, useRole } from "@/lib/role";
+import { useResetDemo } from "@/lib/queries";
 import { ROLE_LABEL } from "@/lib/format";
 import type { Role } from "@/lib/types";
 import {
@@ -28,9 +29,12 @@ const ROLE_ITEMS = (Object.keys(ROLE_LABEL) as Role[]).map((r) => ({
   label: ROLE_LABEL[r],
 }));
 
+const IS_DEV = process.env.NODE_ENV !== "production";
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const clinic = useClinic();
+  const role = useRole();
+  const reset = useResetDemo();
 
   return (
     <div className="flex min-h-full flex-col">
@@ -62,12 +66,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="ml-auto flex items-center gap-2">
             <span className="hidden text-sm text-muted-foreground md:inline">Viewing as</span>
-            {clinic ? (
-              <Select
-                items={ROLE_ITEMS}
-                value={clinic.role}
-                onValueChange={(v) => v && setRole(v as Role)}
-              >
+            {role ? (
+              <Select items={ROLE_ITEMS} value={role} onValueChange={(v) => v && setRole(v as Role)}>
                 <SelectTrigger aria-label="Viewing as" className="w-32">
                   <SelectValue />
                 </SelectTrigger>
@@ -90,18 +90,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <footer className="border-t py-3 text-center text-xs text-muted-foreground">
         Prototype · synthetic data only · no real patients
-        {clinic && (
+        {IS_DEV && (
           <>
             {" · "}
             <button
               type="button"
-              className="underline underline-offset-2 hover:text-foreground"
-              onClick={() => {
-                resetDemo();
-                toast("Demo data reset");
-              }}
+              disabled={reset.isPending}
+              className="underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+              onClick={() => reset.mutate(undefined, { onSuccess: () => toast("Demo data reset") })}
             >
-              Reset demo data
+              {reset.isPending ? "Resetting…" : "Reset demo data"}
             </button>
           </>
         )}
@@ -110,7 +108,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Loading placeholder shown until the client-side store is ready. */
+/** Loading placeholder for a whole screen. */
 export function PageSkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading">

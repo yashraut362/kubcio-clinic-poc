@@ -4,18 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, Phone } from "lucide-react";
-import { patchVisit } from "@/lib/clinic-store";
-import { followUpBlocksCheckout, type VisitOp } from "@/lib/operations";
-import {
-  ROLE_LABEL,
-  STAGE_LABEL,
-  ageText,
-  formatDate,
-  formatTime,
-  matchFor,
-  patientOf,
-} from "@/lib/format";
-import type { ClinicState, Patient, Visit, Vitals } from "@/lib/types";
+import { usePatchVisit, useVisit } from "@/lib/queries";
+import { useRole } from "@/lib/role";
+import type { VisitOp } from "@/lib/operations";
+import { ROLE_LABEL, STAGE_LABEL, ageText, digits, followUpToBook, formatDate, formatTime } from "@/lib/format";
+import type { VisitDetail } from "@/lib/types";
+import type { Vitals } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -35,64 +29,69 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { MatchStatusPill, Pill, StudyFlagPill, studyFlag } from "@/components/status-badges";
+import { MatchStatusPill, Pill, QueryError, StudyFlagPill } from "@/components/status-badges";
 
-/** Runs a PATCH /api/visits/:id operation and reports the outcome. */
-function run(visitId: string, op: VisitOp, success: string) {
-  const res = patchVisit(visitId, op);
-  if (res.ok) toast.success(success);
-  else toast.error(res.error);
-  return res.ok;
+/** PATCH /api/visits/:id with a success toast (errors are toasted by the hook). */
+function usePatch(visitId: string) {
+  const patch = usePatchVisit();
+  return {
+    pending: patch.isPending,
+    run: (op: VisitOp, success: string) =>
+      patch.mutate({ id: visitId, op }, { onSuccess: () => toast.success(success) }),
+  };
 }
 
-export function VisitPanel({
-  clinic,
-  visit,
-  onClose,
-}: {
-  clinic: ClinicState;
-  visit: Visit | null;
-  onClose: () => void;
-}) {
-  const patient = visit ? patientOf(clinic, visit.patientId) : undefined;
+export function VisitPanel({ visitId, onClose }: { visitId: string | null; onClose: () => void }) {
+  const role = useRole();
+  const detail = useVisit(visitId);
+  const data = detail.data;
 
   return (
-    <Sheet open={Boolean(visit)} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={Boolean(visitId)} onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full overflow-y-auto data-[side=right]:sm:max-w-xl">
-        {visit && patient && (
+        {!data ? (
+          <>
+            <SheetHeader className="border-b pr-12">
+              <SheetTitle>{detail.isError ? "Couldn't load visit" : "Loading visit…"}</SheetTitle>
+              <SheetDescription className="sr-only">Visit details</SheetDescription>
+            </SheetHeader>
+            <div className="space-y-3 px-4">
+              {detail.isError ? (
+                <QueryError error={detail.error} onRetry={() => detail.refetch()} />
+              ) : (
+                <>
+                  <Skeleton className="h-5 w-48" />
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </>
+              )}
+            </div>
+          </>
+        ) : (
           <>
             <SheetHeader className="border-b pr-12">
               <div className="flex flex-wrap items-center gap-2">
-                <SheetTitle className="text-lg font-semibold">{patient.name}</SheetTitle>
-                <Pill>{STAGE_LABEL[visit.stage]}</Pill>
-                <StudyFlagPill match={matchFor(clinic, patient.id)} role={clinic.role} />
+                <SheetTitle className="text-lg font-semibold">{data.patient.name}</SheetTitle>
+                <Pill>{STAGE_LABEL[data.visit.stage]}</Pill>
+                <StudyFlagPill flag={data.studyFlag} />
               </div>
               <SheetDescription>
-                {ageText(patient)} · checked in {formatTime(visit.checkedInAt)} · viewing as{" "}
-                {ROLE_LABEL[clinic.role]}
+                {ageText(data.patient)} · checked in {formatTime(data.visit.checkedInAt)}
+                {role && ` · viewing as ${ROLE_LABEL[role]}`}
               </SheetDescription>
             </SheetHeader>
 
             <div className="space-y-6 px-4 pb-6">
               <Field label="Reason for visit">
-                <p className="text-sm">{visit.reason}</p>
+                <p className="text-sm">{data.visit.reason}</p>
               </Field>
 
-              {clinic.role === "reception" && (
-                <ReceptionSection visit={visit} patient={patient} clinic={clinic} />
-              )}
-              {clinic.role === "nurse" && (
-                <NurseSection key={`${visit.id}-${visit.stage}`} visit={visit} clinic={clinic} />
-              )}
-              {clinic.role === "doctor" && (
-                <DoctorSection
-                  key={`${visit.id}-${visit.stage}`}
-                  visit={visit}
-                  patient={patient}
-                  clinic={clinic}
-                />
-              )}
+              {role === "reception" && <ReceptionSection data={data} />}
+              {/* Keyed by stage so the form drafts reset after a handoff. */}
+              {role === "nurse" && <NurseSection key={`${data.visit.id}-${data.visit.stage}`} data={data} />}
+              {role === "doctor" && <DoctorSection key={`${data.visit.id}-${data.visit.stage}`} data={data} />}
             </div>
           </>
         )}
@@ -103,23 +102,17 @@ export function VisitPanel({
 
 // ---------------------------------------------------------------- Reception
 
-function ReceptionSection({
-  visit,
-  patient,
-  clinic,
-}: {
-  visit: Visit;
-  patient: Patient;
-  clinic: ClinicState;
-}) {
-  const doctorDone = visit.stage === "checkout" || visit.stage === "done";
+function ReceptionSection({ data }: { data: VisitDetail }) {
+  const { visit, patient, studyFlag } = data;
   const { followUp } = visit;
+  const doctorDone = visit.stage === "checkout" || visit.stage === "done";
+  const patch = usePatch(visit.id);
 
   return (
     <>
       <Field label="Phone">
         <a
-          href={`tel:${patient.phone.replace(/\s/g, "")}`}
+          href={`tel:${digits(patient.phone)}`}
           className="inline-flex items-center gap-2 text-lg font-medium tabular-nums hover:underline"
         >
           <Phone className="size-4" aria-hidden />
@@ -147,10 +140,9 @@ function ReceptionSection({
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={followUp.booked}
-                    disabled={visit.stage === "done"}
+                    disabled={visit.stage === "done" || patch.pending}
                     onCheckedChange={(booked) =>
-                      run(
-                        visit.id,
+                      patch.run(
                         { type: "set_follow_up_booked", booked },
                         booked ? "Follow-up marked as booked" : "Follow-up unmarked",
                       )
@@ -164,7 +156,7 @@ function ReceptionSection({
               <li className="p-3">
                 <p className="text-sm font-medium">Test ordered</p>
                 <p className="text-xs text-muted-foreground">
-                  Tell the patient how to get it done. Details are in the doctor&apos;s notes.
+                  Make sure the patient knows how to get it done. Ask the doctor if unsure which test.
                 </p>
               </li>
             )}
@@ -175,7 +167,7 @@ function ReceptionSection({
         )}
       </section>
 
-      {studyFlag(matchFor(clinic, patient.id), clinic.role) && (
+      {studyFlag?.status === "confirmed" && (
         <p className="text-sm text-muted-foreground">
           This patient is on the{" "}
           <Link href="/studies" className="underline underline-offset-2">
@@ -189,13 +181,13 @@ function ReceptionSection({
         <div className="space-y-2">
           <Button
             className="w-full"
-            disabled={followUpBlocksCheckout(visit)}
-            onClick={() => run(visit.id, { type: "complete_checkout" }, `${patient.name} checked out`)}
+            disabled={followUpToBook(visit) || patch.pending}
+            onClick={() => patch.run({ type: "complete_checkout" }, `${patient.name} checked out`)}
           >
             <Check aria-hidden />
             Complete checkout
           </Button>
-          {followUpBlocksCheckout(visit) && (
+          {followUpToBook(visit) && (
             <p className="text-center text-xs text-muted-foreground">
               Mark the follow-up as booked to finish checkout.
             </p>
@@ -211,7 +203,7 @@ function ReceptionSection({
 
 type VitalsDraft = { bloodPressure: string; weightKg: string; temperatureC: string; notes: string };
 
-const toDraft = (v: Vitals | null): VitalsDraft => ({
+const toDraft = (v: Vitals | null | undefined): VitalsDraft => ({
   bloodPressure: v?.bloodPressure ?? "",
   weightKg: v?.weightKg?.toString() ?? "",
   temperatureC: v?.temperatureC?.toString() ?? "",
@@ -227,15 +219,13 @@ const fromDraft = (d: VitalsDraft): Vitals => ({
   notes: d.notes.trim(),
 });
 
-function NurseSection({ visit, clinic }: { visit: Visit; clinic: ClinicState }) {
+function NurseSection({ data }: { data: VisitDetail }) {
+  const { visit } = data;
   const [draft, setDraft] = useState<VitalsDraft>(() => toDraft(visit.vitals));
   const editable = visit.stage === "with_nurse";
   const dirty = JSON.stringify(draft) !== JSON.stringify(toDraft(visit.vitals));
-
-  const past = clinic.visits
-    .filter((v) => v.patientId === visit.patientId && v.id !== visit.id && v.vitals)
-    .sort((a, b) => b.checkedInAt.localeCompare(a.checkedInAt))
-    .slice(0, 3);
+  const patch = usePatch(visit.id);
+  const past = data.previousVitals ?? [];
 
   const set = (k: keyof VitalsDraft) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setDraft((d) => ({ ...d, [k]: e.target.value }));
@@ -245,7 +235,8 @@ function NurseSection({ visit, clinic }: { visit: Visit; clinic: ClinicState }) 
       {visit.stage === "checked_in" && (
         <Button
           className="w-full"
-          onClick={() => run(visit.id, { type: "start_nurse" }, "Nurse assessment started")}
+          disabled={patch.pending}
+          onClick={() => patch.run({ type: "start_nurse" }, "Nurse assessment started")}
         >
           Start nurse assessment
           <ArrowRight aria-hidden />
@@ -271,16 +262,15 @@ function NurseSection({ visit, clinic }: { visit: Visit; clinic: ClinicState }) 
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button
             variant="outline"
-            disabled={!dirty}
-            onClick={() => run(visit.id, { type: "save_vitals", vitals: fromDraft(draft) }, "Vitals saved")}
+            disabled={!dirty || patch.pending}
+            onClick={() => patch.run({ type: "save_vitals", vitals: fromDraft(draft) }, "Vitals saved")}
           >
             {dirty ? "Save" : "Saved"}
           </Button>
           <Button
             className="flex-1"
-            onClick={() =>
-              run(visit.id, { type: "send_to_doctor", vitals: fromDraft(draft) }, "Sent to the doctor")
-            }
+            disabled={patch.pending}
+            onClick={() => patch.run({ type: "send_to_doctor", vitals: fromDraft(draft) }, "Sent to the doctor")}
           >
             Save and send to doctor
             <ArrowRight aria-hidden />
@@ -311,12 +301,12 @@ function NurseSection({ visit, clinic }: { visit: Visit; clinic: ClinicState }) 
                 </tr>
               </thead>
               <tbody className="tabular-nums">
-                {past.map((v) => (
-                  <tr key={v.id} className="border-t">
-                    <td className="px-3 py-2">{formatDate(v.checkedInAt)}</td>
-                    <td className="px-3 py-2">{v.vitals!.bloodPressure || "–"}</td>
-                    <td className="px-3 py-2">{v.vitals!.weightKg ?? "–"} kg</td>
-                    <td className="px-3 py-2">{v.vitals!.temperatureC ?? "–"} °C</td>
+                {past.map((p) => (
+                  <tr key={p.checkedInAt} className="border-t">
+                    <td className="px-3 py-2">{formatDate(p.checkedInAt)}</td>
+                    <td className="px-3 py-2">{p.vitals.bloodPressure || "–"}</td>
+                    <td className="px-3 py-2">{p.vitals.weightKg ?? "–"} kg</td>
+                    <td className="px-3 py-2">{p.vitals.temperatureC ?? "–"} °C</td>
                   </tr>
                 ))}
               </tbody>
@@ -332,25 +322,17 @@ function NurseSection({ visit, clinic }: { visit: Visit; clinic: ClinicState }) 
 
 const WEEK_ITEMS = [1, 2, 4, 6, 12].map((w) => ({ value: String(w), label: `${w} week${w === 1 ? "" : "s"}` }));
 
-function DoctorSection({
-  visit,
-  patient,
-  clinic,
-}: {
-  visit: Visit;
-  patient: Patient;
-  clinic: ClinicState;
-}) {
+function DoctorSection({ data }: { data: VisitDetail }) {
+  const { visit, patient, studyFlag } = data;
   const initial = {
-    doctorNotes: visit.doctorNotes,
+    doctorNotes: visit.doctorNotes ?? "",
     followUp: { needed: visit.followUp.needed, weeks: visit.followUp.weeks ?? 2 },
     testOrdered: visit.testOrdered,
   };
   const [draft, setDraft] = useState(initial);
   const editable = visit.stage === "with_doctor";
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
-  const match = matchFor(clinic, patient.id);
-  const showMatch = match && match.status !== "rejected";
+  const patch = usePatch(visit.id);
 
   return (
     <>
@@ -375,24 +357,24 @@ function DoctorSection({
       </section>
 
       <section className="grid gap-4 sm:grid-cols-3">
-        <ListField label="Diagnoses" items={patient.diagnoses} empty="None recorded" />
-        <ListField label="Medications" items={patient.medications} empty="None recorded" />
-        <ListField label="Allergies" items={patient.allergies} empty="No known allergies" warn />
+        <ListField label="Diagnoses" items={patient.diagnoses ?? []} empty="None recorded" />
+        <ListField label="Medications" items={patient.medications ?? []} empty="None recorded" />
+        <ListField label="Allergies" items={patient.allergies ?? []} empty="No known allergies" warn />
       </section>
 
-      {showMatch && (
+      {studyFlag && (
         <section className="space-y-2 rounded-lg border p-3">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-medium">Diabetes study</h3>
-            <MatchStatusPill match={match} />
+            <MatchStatusPill status={studyFlag.status} />
           </div>
-          <p className="text-sm">{match.reason}</p>
-          {match.evidence && (
-            <p className="rounded bg-muted px-2 py-1 font-mono text-xs">“{match.evidence}”</p>
+          {studyFlag.reason && <p className="text-sm">{studyFlag.reason}</p>}
+          {studyFlag.evidence && (
+            <p className="rounded bg-muted px-2 py-1 font-mono text-xs">“{studyFlag.evidence}”</p>
           )}
           <p className="text-xs text-muted-foreground">
             A flag is not eligibility or consent.{" "}
-            {match.status !== "confirmed" && (
+            {studyFlag.status !== "confirmed" && (
               <Link href="/studies" className="underline underline-offset-2">
                 Review it in Studies
               </Link>
@@ -463,21 +445,23 @@ function DoctorSection({
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button
             variant="outline"
-            onClick={() => run(visit.id, { type: "back_to_nurse", ...draft }, "Sent back to the nurse")}
+            disabled={patch.pending}
+            onClick={() => patch.run({ type: "back_to_nurse", ...draft }, "Sent back to the nurse")}
           >
             <ArrowLeft aria-hidden />
             Back to nurse
           </Button>
           <Button
             variant="outline"
-            disabled={!dirty}
-            onClick={() => run(visit.id, { type: "save_doctor", ...draft }, "Notes saved")}
+            disabled={!dirty || patch.pending}
+            onClick={() => patch.run({ type: "save_doctor", ...draft }, "Notes saved")}
           >
             {dirty ? "Save" : "Saved"}
           </Button>
           <Button
             className="flex-1"
-            onClick={() => run(visit.id, { type: "send_to_checkout", ...draft }, "Sent to checkout")}
+            disabled={patch.pending}
+            onClick={() => patch.run({ type: "send_to_checkout", ...draft }, "Sent to checkout")}
           >
             Send to checkout
             <ArrowRight aria-hidden />

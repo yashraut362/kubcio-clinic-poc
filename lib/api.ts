@@ -1,6 +1,6 @@
 /**
  * Shared helpers for the route handlers: DB connection, role checks,
- * error-to-HTTP mapping, request body parsing and role-based redaction.
+ * request validation, error-to-HTTP mapping and role-based response shaping.
  *
  * Roles come from the `x-staff-role` header (the UI's "Viewing as" selector).
  * That is a demo mechanism, not authentication, but every handler still
@@ -8,25 +8,21 @@
  */
 import mongoose from "mongoose";
 import { connection } from "next/server";
+import { z } from "zod";
 import { connectDB } from "./db";
-import type { MatchOp, VisitOp } from "./operations";
-import type { Consent, Patient, Role, StudyMatch, Vitals } from "./types";
+import { ApiError } from "./operations";
+import type { Patient, Role, StudyMatch } from "./types";
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { ApiError };
 
-const ROLES: Role[] = ["reception", "nurse", "doctor"];
+// ---------- Roles ----------
+
+const roleSchema = z.enum(["reception", "nurse", "doctor"]);
 
 export function getRole(req: Request): Role {
-  const role = req.headers.get("x-staff-role");
-  if (role && (ROLES as string[]).includes(role)) return role as Role;
-  throw new ApiError(401, "Send the x-staff-role header: reception, nurse or doctor.");
+  const role = roleSchema.safeParse(req.headers.get("x-staff-role"));
+  if (!role.success) throw new ApiError(401, "Send the x-staff-role header: reception, nurse or doctor.");
+  return role.data;
 }
 
 export function requireRole(req: Request, ...allowed: Role[]): Role {
@@ -34,6 +30,8 @@ export function requireRole(req: Request, ...allowed: Role[]): Role {
   if (!allowed.includes(role)) throw new ApiError(403, `Only ${allowed.join(" or ")} can do this.`);
   return role;
 }
+
+// ---------- Handler wrapper ----------
 
 /**
  * Wraps a route handler: waits for a request (no prerendering of DB reads),
@@ -54,33 +52,56 @@ export function route<A extends unknown[]>(handler: (...args: A) => Promise<Resp
 }
 
 function errorResponse(err: unknown): Response {
-  if (err instanceof ApiError) return Response.json({ error: err.message }, { status: err.status });
-  if (err instanceof mongoose.Error.CastError) {
-    return Response.json({ error: `Invalid ${err.path}.` }, { status: 400 });
-  }
-  if (err instanceof mongoose.Error.ValidationError) {
-    return Response.json({ error: err.message }, { status: 422 });
-  }
+  const json = (status: number, error: string) => Response.json({ error }, { status });
+  if (err instanceof ApiError) return json(err.status, err.message);
+  if (err instanceof mongoose.Error.CastError) return json(400, `Invalid ${err.path}.`);
+  if (err instanceof mongoose.Error.ValidationError) return json(422, err.message);
   if (typeof err === "object" && err && "code" in err && err.code === 11000) {
-    return Response.json({ error: "That record already exists." }, { status: 409 });
+    return json(409, "That record already exists.");
   }
   console.error("[api] unexpected error:", err);
-  return Response.json({ error: "Something went wrong." }, { status: 500 });
+  return json(500, "Something went wrong.");
 }
 
-export async function readJson(req: Request): Promise<Record<string, unknown>> {
-  try {
-    const body = await req.json();
-    if (body && typeof body === "object" && !Array.isArray(body)) return body;
-  } catch {
-    // fall through
+// ---------- Request parsing ----------
+
+/** Reads the JSON body and validates it; failures become 400 (not JSON) or 422 (invalid). */
+export async function parseBody<S extends z.ZodType>(req: Request, schema: S): Promise<z.infer<S>> {
+  const body = await req.json().catch(() => {
+    throw new ApiError(400, "Request body must be JSON.");
+  });
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = issue.path.length ? `${issue.path.join(".")}: ` : "";
+    throw new ApiError(422, `${where}${issue.message}`);
   }
-  throw new ApiError(400, "Request body must be a JSON object.");
+  return parsed.data;
 }
 
 export function assertObjectId(id: string, what = "id") {
   if (!mongoose.isValidObjectId(id)) throw new ApiError(400, `Invalid ${what}.`);
 }
+
+const objectId = z.string().refine((s) => mongoose.isValidObjectId(s), "Invalid id.");
+
+/** POST /api/patients */
+export const createPatientSchema = z.object({
+  name: z.string().trim().min(1, "Name is required."),
+  phone: z.string().trim().min(1, "Phone is required."),
+  dateOfBirth: z.iso.date("Use YYYY-MM-DD.").nullable().default(null),
+});
+
+/** POST /api/visits */
+export const checkInSchema = z.object({
+  patientId: objectId,
+  reason: z.string().trim().min(1, "Reason is required."),
+});
+
+// ---------- Mongo helpers ----------
+
+/** A Mongoose document as the API/client shape in lib/types.ts (see the toJSON options in models.ts). */
+export const toApi = <T>(doc: { toJSON(): unknown }): T => doc.toJSON() as T;
 
 /** Matches a phone ignoring spaces/dashes, e.g. "07700900123" finds "07700 900123". */
 export function phoneDigitsRegex(digits: string, exact: boolean): RegExp {
@@ -90,94 +111,10 @@ export function phoneDigitsRegex(digits: string, exact: boolean): RegExp {
 
 export const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// ---------- Body parsing ----------
-
-const bad = (msg: string): never => {
-  throw new ApiError(422, msg);
-};
-const str = (v: unknown, field: string): string => (typeof v === "string" ? v : bad(`${field} must be a string.`));
-const bool = (v: unknown, field: string): boolean =>
-  typeof v === "boolean" ? v : bad(`${field} must be true or false.`);
-const numOrNull = (v: unknown, field: string): number | null =>
-  v === null || v === undefined
-    ? null
-    : typeof v === "number" && Number.isFinite(v)
-      ? v
-      : bad(`${field} must be a number or null.`);
-const obj = (v: unknown, field: string): Record<string, unknown> =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : bad(`${field} is required.`);
-
-function parseVitals(v: unknown): Vitals {
-  const o = obj(v, "vitals");
-  return {
-    bloodPressure: str(o.bloodPressure ?? "", "vitals.bloodPressure").trim(),
-    weightKg: numOrNull(o.weightKg, "vitals.weightKg"),
-    temperatureC: numOrNull(o.temperatureC, "vitals.temperatureC"),
-    notes: str(o.notes ?? "", "vitals.notes").trim(),
-  };
-}
-
-function parseDoctor(b: Record<string, unknown>) {
-  const followUp = obj(b.followUp, "followUp");
-  return {
-    doctorNotes: str(b.doctorNotes ?? "", "doctorNotes"),
-    followUp: { needed: bool(followUp.needed, "followUp.needed"), weeks: numOrNull(followUp.weeks, "followUp.weeks") },
-    testOrdered: bool(b.testOrdered, "testOrdered"),
-  };
-}
-
-/** PATCH /api/visits/:id body. */
-export function parseVisitOp(b: Record<string, unknown>): VisitOp {
-  switch (b.type) {
-    case "start_nurse":
-    case "complete_checkout":
-      return { type: b.type };
-    case "save_vitals":
-    case "send_to_doctor":
-      return { type: b.type, vitals: parseVitals(b.vitals) };
-    case "save_doctor":
-    case "send_to_checkout":
-    case "back_to_nurse":
-      return { type: b.type, ...parseDoctor(b) };
-    case "set_follow_up_booked":
-      return { type: b.type, booked: bool(b.booked, "booked") };
-    default:
-      return bad(
-        "type must be one of: start_nurse, save_vitals, send_to_doctor, save_doctor, send_to_checkout, back_to_nurse, set_follow_up_booked, complete_checkout.",
-      );
-  }
-}
-
-const CONSENTS: Consent[] = ["unknown", "undecided", "consented", "declined"];
-
-/** PATCH /api/matches/:id body. */
-export function parseMatchOp(b: Record<string, unknown>): MatchOp {
-  switch (b.type) {
-    case "review":
-      if (b.decision !== "confirmed" && b.decision !== "rejected") bad("decision must be confirmed or rejected.");
-      return { type: "review", decision: b.decision as "confirmed" | "rejected" };
-    case "record_contact": {
-      if (b.contactStatus !== "reached" && b.contactStatus !== "not_reached") {
-        bad("contactStatus must be reached or not_reached.");
-      }
-      const consent = (b.consent ?? "unknown") as Consent;
-      if (!CONSENTS.includes(consent)) bad(`consent must be one of: ${CONSENTS.join(", ")}.`);
-      return { type: "record_contact", contactStatus: b.contactStatus as "reached" | "not_reached", consent };
-    }
-    default:
-      return bad("type must be review or record_contact.");
-  }
-}
-
 // ---------- Role-based shaping of responses ----------
 
 /** Contact details only: what every role needs to identify a patient. */
-export const patientSummary = (p: Patient) => ({
-  id: p.id,
-  name: p.name,
-  phone: p.phone,
-  dateOfBirth: p.dateOfBirth,
-});
+export const patientSummary = ({ id, name, phone, dateOfBirth }: Patient) => ({ id, name, phone, dateOfBirth });
 
 /**
  * The study flag a role may see on a visit: doctors see unreviewed flags,
@@ -187,11 +124,6 @@ export function studyFlagFor(role: Role, match: StudyMatch | undefined) {
   if (!match || match.status === "rejected") return null;
   if (match.status === "confirmed") return { id: match.id, status: match.status };
   if (role !== "doctor") return null;
-  return {
-    id: match.id,
-    status: match.status,
-    evidence: match.evidence,
-    reason: match.reason,
-    missingInfo: match.missingInfo,
-  };
+  const { id, status, evidence, reason, missingInfo } = match;
+  return { id, status, evidence, reason, missingInfo };
 }

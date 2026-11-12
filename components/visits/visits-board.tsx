@@ -3,21 +3,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { FlaskConical, UserPlus } from "lucide-react";
-import { useClinic } from "@/lib/clinic-store";
+import { useBoard } from "@/lib/queries";
+import { useRole } from "@/lib/role";
 import { PageSkeleton } from "@/components/app-shell";
-import {
-  ROLE_LABEL,
-  STAGES,
-  formatTime,
-  followUpToBook,
-  matchFor,
-  patientOf,
-  todaysVisits,
-} from "@/lib/format";
+import { ROLE_LABEL, STAGES, followUpToBook, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { ClinicState, Role, Visit } from "@/lib/types";
+import type { BoardVisit } from "@/lib/types";
+import type { Role } from "@/lib/types";
 import { buttonVariants } from "@/components/ui/button";
-import { FollowUpPill, Pill, StudyFlagPill } from "@/components/status-badges";
+import { Skeleton } from "@/components/ui/skeleton";
+import { FollowUpPill, Pill, QueryError, StudyFlagPill } from "@/components/status-badges";
 import { VisitPanel } from "./visit-panel";
 
 const ROLE_HINT: Record<Role, string> = {
@@ -27,13 +22,12 @@ const ROLE_HINT: Record<Role, string> = {
 };
 
 export function VisitsBoard() {
-  const clinic = useClinic();
+  const role = useRole();
+  const board = useBoard();
   const [openId, setOpenId] = useState<string | null>(null);
 
-  if (!clinic) return <PageSkeleton />;
+  if (!role) return <PageSkeleton />;
 
-  const visits = todaysVisits(clinic).sort((a, b) => a.checkedInAt.localeCompare(b.checkedInAt));
-  const open = visits.find((v) => v.id === openId) ?? null;
   const today = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 
   return (
@@ -42,10 +36,10 @@ export function VisitsBoard() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Today&apos;s visits</h1>
           <p className="text-sm text-muted-foreground">
-            {today} · {ROLE_LABEL[clinic.role]}: {ROLE_HINT[clinic.role]}
+            {today} · {ROLE_LABEL[role]}: {ROLE_HINT[role]}
           </p>
         </div>
-        {clinic.role === "reception" && (
+        {role === "reception" && (
           <Link href="/patients" className={buttonVariants({ size: "sm" })}>
             <UserPlus aria-hidden />
             Check in a patient
@@ -53,11 +47,13 @@ export function VisitsBoard() {
         )}
       </div>
 
+      {board.isError && <QueryError error={board.error} onRetry={() => board.refetch()} />}
+
       <div className="-mx-4 overflow-x-auto px-4 pb-2">
         <div className="grid min-w-[1100px] grid-cols-5 gap-3">
           {STAGES.map((stage) => {
-            const cards = visits.filter((v) => v.stage === stage.id);
-            const yours = stage.owner === clinic.role;
+            const cards = (board.data ?? []).filter((v) => v.stage === stage.id);
+            const yours = stage.owner === role;
             return (
               <section
                 key={stage.id}
@@ -70,22 +66,24 @@ export function VisitsBoard() {
                 <header className="flex items-center justify-between gap-2 px-3 pt-3 pb-2">
                   <h2 id={`col-${stage.id}`} className="text-sm font-medium">
                     {stage.label}
-                    <span className="ml-1.5 text-muted-foreground tabular-nums">{cards.length}</span>
+                    {board.data && (
+                      <span className="ml-1.5 text-muted-foreground tabular-nums">{cards.length}</span>
+                    )}
                   </h2>
                   {yours && <Pill tone="neutral">Your step</Pill>}
                 </header>
                 <ul className="flex flex-1 flex-col gap-2 px-2 pb-2">
+                  {board.isPending && (
+                    <li>
+                      <Skeleton className="h-20 w-full" />
+                    </li>
+                  )}
                   {cards.map((v) => (
                     <li key={v.id}>
-                      <VisitCard
-                        clinic={clinic}
-                        visit={v}
-                        selected={v.id === openId}
-                        onOpen={() => setOpenId(v.id)}
-                      />
+                      <VisitCard visit={v} selected={v.id === openId} onOpen={() => setOpenId(v.id)} />
                     </li>
                   ))}
-                  {cards.length === 0 && (
+                  {board.data && cards.length === 0 && (
                     <li className="px-2 py-6 text-center text-xs text-muted-foreground">No patients</li>
                   )}
                 </ul>
@@ -95,24 +93,20 @@ export function VisitsBoard() {
         </div>
       </div>
 
-      <VisitPanel clinic={clinic} visit={open} onClose={() => setOpenId(null)} />
+      <VisitPanel visitId={openId} onClose={() => setOpenId(null)} />
     </div>
   );
 }
 
 function VisitCard({
-  clinic,
   visit,
   selected,
   onOpen,
 }: {
-  clinic: ClinicState;
-  visit: Visit;
+  visit: BoardVisit;
   selected: boolean;
   onOpen: () => void;
 }) {
-  const patient = patientOf(clinic, visit.patientId);
-  const match = matchFor(clinic, patient.id);
   const showFollowUp = followUpToBook(visit);
   const testOrdered = visit.testOrdered && visit.stage !== "done";
 
@@ -127,13 +121,13 @@ function VisitCard({
       )}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-medium">{patient.name}</span>
+        <span className="font-medium">{visit.patient?.name ?? "Unknown patient"}</span>
         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
           {formatTime(visit.checkedInAt)}
         </span>
       </div>
       <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{visit.reason}</p>
-      {(showFollowUp || testOrdered || match) && (
+      {(showFollowUp || testOrdered || visit.studyFlag) && (
         <div className="mt-2 flex flex-wrap gap-1">
           {showFollowUp && <FollowUpPill weeks={visit.followUp.weeks} />}
           {testOrdered && (
@@ -142,7 +136,7 @@ function VisitCard({
               Test ordered
             </Pill>
           )}
-          <StudyFlagPill match={match} role={clinic.role} />
+          <StudyFlagPill flag={visit.studyFlag} />
         </div>
       )}
     </button>

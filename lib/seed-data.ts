@@ -1,13 +1,14 @@
 /**
- * Synthetic demo data. These are fictional people, not real patients.
+ * Synthetic seed data for POST /api/dev/seed. These are fictional people, not real patients.
  * Phone numbers use the UK range reserved for drama/fiction (07700 900xxx).
  *
- * Built relative to "today" so the board always shows today's visits.
+ * Built relative to "today" so the board always shows today's visits. IDs are
+ * readable keys (e.g. "p-maria"); the seed route maps them to ObjectIds.
  */
-import { screenPatients } from "./screening";
-import type { ClinicState, Patient, StudyMatch, Visit } from "./types";
+import { screenPatients } from "./study-matcher";
+import type { Patient, Study, StudyMatch, Visit } from "./types";
 
-export const DIABETES_STUDY_ID = "study-diabetes";
+const DIABETES_STUDY_ID = "study-diabetes";
 
 function yearsAgo(today: Date, years: number): string {
   return `${today.getFullYear() - years}-03-15`;
@@ -26,7 +27,12 @@ function visit(v: Partial<Visit> & Pick<Visit, "id" | "patientId" | "reason" | "
   return { vitals: null, doctorNotes: "", followUp: noFollowUp, testOrdered: false, ...v };
 }
 
-export function createInitialState(today: Date): ClinicState {
+export function createSeedData(today: Date): {
+  patients: Patient[];
+  visits: Visit[];
+  studies: Study[];
+  matches: StudyMatch[];
+} {
   const patients: Patient[] = [
     {
       id: "p-maria",
@@ -186,7 +192,6 @@ export function createInitialState(today: Date): ClinicState {
   seed("p-robert", { status: "confirmed", reviewedBy: "doctor", contactStatus: "reached", consent: "consented" });
 
   return {
-    role: "reception",
     patients,
     visits,
     studies: [

@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { LogIn, Phone, Search, UserPlus } from "lucide-react";
-import { checkIn, createPatient, useClinic } from "@/lib/clinic-store";
+import { useBoard, useCheckIn, useCreatePatient, usePatients } from "@/lib/queries";
+import { useRole } from "@/lib/role";
 import { PageSkeleton } from "@/components/app-shell";
-import { STAGE_LABEL, ageText, digits, formatTime, todaysVisits } from "@/lib/format";
-import type { Patient } from "@/lib/types";
+import { STAGE_LABEL, ageText, digits, formatTime } from "@/lib/format";
+import type { PatientSummary } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,30 +20,35 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Pill } from "@/components/status-badges";
+import { Pill, QueryError } from "@/components/status-badges";
+
+/** Waits until typing pauses before searching. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
+}
 
 export function PatientsScreen() {
-  const clinic = useClinic();
+  const role = useRole();
   const [query, setQuery] = useState("");
-  const [checkingIn, setCheckingIn] = useState<Patient | null>(null);
+  const search = useDebounced(query.trim(), 250);
+  const patients = usePatients(search);
+  const board = useBoard();
+  const [checkingIn, setCheckingIn] = useState<PatientSummary | null>(null);
   const [adding, setAdding] = useState(false);
 
-  if (!clinic) return <PageSkeleton />;
+  if (!role) return <PageSkeleton />;
 
-  const isReception = clinic.role === "reception";
-  const q = query.trim().toLowerCase();
-  const qDigits = digits(q);
-  // GET /api/patients?q= : name contains, or phone digits contain (3+ digits).
-  const results = clinic.patients
-    .filter((p) => !q || p.name.toLowerCase().includes(q) || (qDigits.length >= 3 && digits(p.phone).includes(qDigits)))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  // A patient's open visit today (not yet done), if any.
+  const isReception = role === "reception";
+  // A patient's open visit today (not yet done), from the board query.
   const activeVisit = new Map(
-    todaysVisits(clinic)
-      .filter((v) => v.stage !== "done")
-      .map((v) => [v.patientId, v]),
+    (board.data ?? []).filter((v) => v.stage !== "done").map((v) => [v.patientId, v]),
   );
 
   return (
@@ -77,8 +83,10 @@ export function PatientsScreen() {
         />
       </div>
 
+      {patients.isError && <QueryError error={patients.error} onRetry={() => patients.refetch()} />}
+
       <div className="overflow-x-auto rounded-xl border">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="w-full min-w-[640px] text-sm" aria-busy={patients.isFetching}>
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
               <th className="px-4 py-2.5 font-medium">Name</th>
@@ -90,18 +98,23 @@ export function PatientsScreen() {
               </th>
             </tr>
           </thead>
-          <tbody>
-            {results.map((p) => {
+          <tbody className={patients.isPlaceholderData ? "opacity-60" : undefined}>
+            {patients.isPending &&
+              [0, 1, 2].map((i) => (
+                <tr key={i} className="border-t">
+                  <td colSpan={5} className="px-4 py-3">
+                    <Skeleton className="h-5 w-full" />
+                  </td>
+                </tr>
+              ))}
+            {patients.data?.map((p) => {
               const visit = activeVisit.get(p.id);
               return (
                 <tr key={p.id} className="border-t">
                   <td className="px-4 py-3 font-medium">{p.name}</td>
                   <td className="px-4 py-3 text-muted-foreground">{ageText(p)}</td>
                   <td className="px-4 py-3">
-                    <a
-                      href={`tel:${digits(p.phone)}`}
-                      className="inline-flex items-center gap-1.5 tabular-nums hover:underline"
-                    >
+                    <a href={`tel:${digits(p.phone)}`} className="inline-flex items-center gap-1.5 tabular-nums hover:underline">
                       <Phone className="size-3.5 text-muted-foreground" aria-hidden />
                       {p.phone}
                     </a>
@@ -126,10 +139,10 @@ export function PatientsScreen() {
                 </tr>
               );
             })}
-            {results.length === 0 && (
+            {patients.data?.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">
-                  No patients match “{query}”.
+                  {search ? `No patients match “${search}”.` : "No patients yet."}
                 </td>
               </tr>
             )}
@@ -153,18 +166,24 @@ export function PatientsScreen() {
 }
 
 /** POST /api/visits */
-function CheckInDialog({ patient, onClose }: { patient: Patient | null; onClose: () => void }) {
+function CheckInDialog({ patient, onClose }: { patient: PatientSummary | null; onClose: () => void }) {
   const router = useRouter();
+  const checkIn = useCheckIn();
   const [reason, setReason] = useState("");
 
   const submit = () => {
     if (!patient) return;
-    const res = checkIn(patient.id, reason);
-    if (!res.ok) return toast.error(res.error);
-    toast.success(`${patient.name} checked in`, {
-      action: { label: "View board", onClick: () => router.push("/") },
-    });
-    onClose();
+    checkIn.mutate(
+      { patientId: patient.id, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          toast.success(`${patient.name} checked in`, {
+            action: { label: "View board", onClick: () => router.push("/") },
+          });
+          onClose();
+        },
+      },
+    );
   };
 
   return (
@@ -199,8 +218,8 @@ function CheckInDialog({ patient, onClose }: { patient: Patient | null; onClose:
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!reason.trim()}>
-                Check in
+              <Button type="submit" disabled={!reason.trim() || checkIn.isPending}>
+                {checkIn.isPending ? "Checking in…" : "Check in"}
               </Button>
             </DialogFooter>
           </form>
@@ -218,19 +237,23 @@ function NewPatientDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreated: (p: Patient) => void;
+  onCreated: (p: PatientSummary) => void;
 }) {
+  const create = useCreatePatient();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
-  const submit = () => {
-    const res = createPatient({ name, phone, dateOfBirth: dateOfBirth || null });
-    if (!res.ok) return setError(res.error);
-    toast.success(`${res.value.name} added`);
-    onCreated(res.value);
-  };
+  const submit = () =>
+    create.mutate(
+      { name: name.trim(), phone: phone.trim(), dateOfBirth: dateOfBirth || null },
+      {
+        onSuccess: (patient) => {
+          toast.success(`${patient.name} added`);
+          onCreated(patient);
+        },
+      },
+    );
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -262,17 +285,17 @@ function NewPatientDialog({
               <Input id="np-dob" type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} />
             </div>
           </div>
-          {error && (
+          {create.isError && (
             <p role="alert" className="text-sm text-destructive">
-              {error}
+              {create.error.message}
             </p>
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || !phone.trim()}>
-              Add and check in
+            <Button type="submit" disabled={!name.trim() || !phone.trim() || create.isPending}>
+              {create.isPending ? "Adding…" : "Add and check in"}
             </Button>
           </DialogFooter>
         </form>

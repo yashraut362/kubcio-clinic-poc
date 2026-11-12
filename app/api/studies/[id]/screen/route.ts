@@ -1,9 +1,9 @@
 import { Types } from "mongoose";
 import type { NextRequest } from "next/server";
-import { ApiError, assertObjectId, requireRole, route } from "@/lib/api";
+import { ApiError, assertObjectId, requireRole, route, toApi } from "@/lib/api";
 import { PatientModel, StudyMatchModel, StudyModel } from "@/lib/models";
-import { screenPatients } from "@/lib/screening";
-import type { Patient, StudyMatch } from "@/lib/types";
+import { screenPatients } from "@/lib/study-matcher";
+import type { Patient, ScreenResult, StudyMatch } from "@/lib/types";
 
 /**
  * POST /api/studies/:id/screen  (doctor)
@@ -27,8 +27,8 @@ export const POST = route(async (req: NextRequest, ctx: RouteContext<"/api/studi
   ]);
   const next = screenPatients(
     id,
-    patients.map((p) => p.toJSON() as unknown as Patient),
-    existing.map((m) => m.toJSON() as unknown as StudyMatch),
+    patients.map((d) => toApi<Patient>(d)),
+    existing.map((d) => toApi<StudyMatch>(d)),
     new Date(),
   ).filter((m) => m.studyId === id);
 
@@ -55,10 +55,11 @@ export const POST = route(async (req: NextRequest, ctx: RouteContext<"/api/studi
     patientId: { $nin: unreviewed.map((m) => new Types.ObjectId(m.patientId)) },
   });
 
-  return Response.json({
+  const result: ScreenResult = {
     screened: patients.length,
     awaitingReview: unreviewed.length,
     reviewed: next.length - unreviewed.length,
     removed: deletedCount,
-  });
+  };
+  return Response.json(result);
 });

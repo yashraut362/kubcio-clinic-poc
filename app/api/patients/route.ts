@@ -1,13 +1,15 @@
 import type { NextRequest } from "next/server";
 import {
   ApiError,
+  createPatientSchema,
   escapeRegex,
   getRole,
+  parseBody,
   patientSummary,
   phoneDigitsRegex,
-  readJson,
   requireRole,
   route,
+  toApi,
 } from "@/lib/api";
 import { PatientModel } from "@/lib/models";
 import type { Patient } from "@/lib/types";
@@ -26,11 +28,8 @@ export const GET = route(async (req: NextRequest) => {
   if (q) or.push({ name: { $regex: escapeRegex(q), $options: "i" } });
   if (digits.length >= 3) or.push({ phone: { $regex: phoneDigitsRegex(digits, false) } });
 
-  const docs = await PatientModel.find(or.length ? { $or: or } : {})
-    .sort({ name: 1 })
-    .limit(50);
-  const patients = docs.map((d) => patientSummary(d.toJSON() as unknown as Patient));
-  return Response.json({ patients });
+  const docs = await PatientModel.find(or.length ? { $or: or } : {}).sort({ name: 1 }).limit(50);
+  return Response.json({ patients: docs.map((d) => patientSummary(toApi<Patient>(d))) });
 });
 
 /**
@@ -39,16 +38,7 @@ export const GET = route(async (req: NextRequest) => {
  */
 export const POST = route(async (req: NextRequest) => {
   requireRole(req, "reception");
-  const body = await readJson(req);
-
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const phone = typeof body.phone === "string" ? body.phone.trim() : "";
-  if (!name || !phone) throw new ApiError(422, "name and phone are required.");
-
-  const dob = body.dateOfBirth ?? null;
-  if (dob !== null && (typeof dob !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dob) || Number.isNaN(Date.parse(dob)))) {
-    throw new ApiError(422, "dateOfBirth must be YYYY-MM-DD or null.");
-  }
+  const { name, phone, dateOfBirth } = await parseBody(req, createPatientSchema);
 
   // The unique index catches exact duplicates; this also catches "07700900123" vs "07700 900123".
   const digits = phone.replace(/\D/g, "");
@@ -56,6 +46,6 @@ export const POST = route(async (req: NextRequest) => {
     throw new ApiError(409, "A patient with this phone number already exists.");
   }
 
-  const doc = await PatientModel.create({ name, phone, dateOfBirth: dob ? new Date(dob) : null });
-  return Response.json({ patient: doc.toJSON() }, { status: 201 });
+  const doc = await PatientModel.create({ name, phone, dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null });
+  return Response.json({ patient: toApi<Patient>(doc) }, { status: 201 });
 });

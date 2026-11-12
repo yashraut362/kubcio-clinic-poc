@@ -1,26 +1,20 @@
 import { Types } from "mongoose";
 import { ApiError, route } from "@/lib/api";
-import { createInitialState } from "@/lib/mock-data";
 import { PatientModel, StudyMatchModel, StudyModel, VisitModel } from "@/lib/models";
-
-/** Drops the client-side string id; Mongo assigns its own _id. */
-function omitId<T extends { id: string }>(o: T): Omit<T, "id"> {
-  const copy: Partial<T> = { ...o };
-  delete copy.id;
-  return copy as Omit<T, "id">;
-}
+import { createSeedData } from "@/lib/seed-data";
 
 /**
  * POST /api/dev/seed  (development only, not part of the LLD API)
- * Wipes the 4 collections and loads the same synthetic data the UI demo uses.
- * All people are fictional.
+ * Wipes the 4 collections and loads the synthetic demo data. All people are fictional.
  */
 export const POST = route(async () => {
   if (process.env.NODE_ENV === "production") throw new ApiError(404, "Not found.");
 
-  const s = createInitialState(new Date());
-  const patientIds = new Map(s.patients.map((p) => [p.id, new Types.ObjectId()]));
-  const studyIds = new Map(s.studies.map((st) => [st.id, new Types.ObjectId()]));
+  const s = createSeedData(new Date());
+  // Seed data uses readable keys ("p-maria"); give each one a stable ObjectId.
+  // ISO date strings are cast to Date by Mongoose.
+  const ids = new Map<string, Types.ObjectId>();
+  const oid = (key: string) => ids.get(key) ?? ids.set(key, new Types.ObjectId()).get(key)!;
 
   await Promise.all([
     PatientModel.deleteMany({}),
@@ -36,26 +30,17 @@ export const POST = route(async () => {
     StudyMatchModel.syncIndexes(),
   ]);
 
-  await PatientModel.insertMany(
-    s.patients.map(({ id, dateOfBirth, ...p }) => ({
-      _id: patientIds.get(id),
-      ...p,
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-    })),
-  );
-  await StudyModel.insertMany(s.studies.map(({ id, ...st }) => ({ _id: studyIds.get(id), ...st })));
+  await PatientModel.insertMany(s.patients.map(({ id, ...p }) => ({ ...p, _id: oid(id) })));
+  await StudyModel.insertMany(s.studies.map(({ id, ...st }) => ({ ...st, _id: oid(id) })));
   await VisitModel.insertMany(
-    s.visits.map(({ patientId, checkedInAt, ...v }) => ({
-      ...omitId(v),
-      patientId: patientIds.get(patientId),
-      checkedInAt: new Date(checkedInAt),
-    })),
+    s.visits.map(({ id, patientId, ...v }) => ({ ...v, _id: oid(id), patientId: oid(patientId) })),
   );
   await StudyMatchModel.insertMany(
-    s.matches.map(({ patientId, studyId, ...m }) => ({
-      ...omitId(m),
-      patientId: patientIds.get(patientId),
-      studyId: studyIds.get(studyId),
+    s.matches.map(({ id, patientId, studyId, ...m }) => ({
+      ...m,
+      _id: oid(id),
+      patientId: oid(patientId),
+      studyId: oid(studyId),
     })),
   );
 
@@ -64,6 +49,5 @@ export const POST = route(async () => {
     visits: s.visits.length,
     studies: s.studies.length,
     matches: s.matches.length,
-    studyId: String(studyIds.values().next().value),
   });
 });

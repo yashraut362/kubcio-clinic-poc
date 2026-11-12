@@ -1,5 +1,5 @@
 import { ageOn } from "./study-matcher";
-import type { ClinicState, Consent, ContactStatus, Patient, Role, StudyMatch, Visit, VisitStage } from "./types";
+import type { Consent, ContactStatus, MatchStatus, Role, Visit, VisitStage } from "./types";
 
 export const ROLE_LABEL: Record<Role, string> = {
   reception: "Reception",
@@ -33,10 +33,11 @@ export const CONTACT_LABEL: Record<ContactStatus, string> = {
   reached: "Reached",
 };
 
-export function ageText(p: Patient): string {
-  const age = ageOn(p.dateOfBirth, new Date());
-  return age === null ? "Age unknown" : `${age} y`;
+export function ageText(p: { dateOfBirth: string | null }): string {
+  return ageLabel(ageOn(p.dateOfBirth, new Date()));
 }
+
+export const ageLabel = (age: number | null) => (age === null ? "Age unknown" : `${age} y`);
 
 export const formatTime = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -44,29 +45,14 @@ export const formatTime = (iso: string) =>
 export const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
 
-export function isToday(iso: string): boolean {
-  const d = new Date(iso);
-  const t = new Date();
-  return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
-}
+export const followUpToBook = (v: Pick<Visit, "followUp">) => v.followUp.needed && !v.followUp.booked;
 
-export const todaysVisits = (s: ClinicState) => s.visits.filter((v) => isToday(v.checkedInAt));
-
-export const patientOf = (s: ClinicState, patientId: string) =>
-  s.patients.find((p) => p.id === patientId)!;
-
-/** The diabetes-study match for a patient, if they were flagged. */
-export const matchFor = (s: ClinicState, patientId: string): StudyMatch | undefined =>
-  s.matches.find((m) => m.patientId === patientId);
-
-export const followUpToBook = (v: Visit) => v.followUp.needed && !v.followUp.booked;
-
-export const awaitingReview = (m: StudyMatch) =>
+export const awaitingReview = (m: { status: MatchStatus }) =>
   m.status === "possible_match" || m.status === "needs_checking";
 
 /** Who still needs a call: not reached yet, or reached but hasn't decided. */
-export const needsCall = (m: StudyMatch) =>
+export const needsCall = (m: { status: MatchStatus; contactStatus: ContactStatus; consent: Consent }) =>
   m.status === "confirmed" && (m.contactStatus !== "reached" || m.consent === "undecided");
 
-/** Digits-only phone comparison so "07700 900123" matches "07700900123". */
+/** Digits-only phone, e.g. for tel: links. */
 export const digits = (s: string) => s.replace(/\D/g, "");

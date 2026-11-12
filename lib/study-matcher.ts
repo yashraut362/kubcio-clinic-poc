@@ -19,11 +19,15 @@
  * Matching is whole-word and case-insensitive, so "prediabetes" never counts as
  * "diabetes" and "DM2" inside another word (e.g. "ADM2") is ignored.
  *
- * This file has no imports so it can be unit-tested with plain `node --test`
- * and reused unchanged by the backend later.
+ * `screenPatients` runs the matcher over every patient (POST /api/studies/:id/screen
+ * and the seed data use it).
+ *
+ * Only type imports, so it can be unit-tested with plain `node --test`.
  */
 
-export type MatchStatus = "no_match" | "needs_checking" | "possible_match";
+import type { Patient, StudyMatch } from "./types";
+
+export type MatcherStatus = "no_match" | "needs_checking" | "possible_match";
 
 export interface MatchInput {
   /** ISO date "YYYY-MM-DD", or null when not recorded. */
@@ -33,7 +37,7 @@ export interface MatchInput {
 }
 
 export interface MatchOutcome {
-  status: MatchStatus;
+  status: MatcherStatus;
   /** One plain-language sentence explaining the result. */
   reason: string;
   /** The condition text the result is based on (verbatim, "; "-separated). */
@@ -191,4 +195,46 @@ export function matchPatient(input: MatchInput, today: Date): MatchOutcome {
     evidence: relevant.join("; "),
     missingInfo: ["Confirmed diabetes diagnosis"],
   };
+}
+
+/**
+ * Runs the matcher over every patient and returns the study's new match list:
+ * - flagged patients get a match (possible_match / needs_checking) with evidence;
+ * - matches a doctor already confirmed or rejected are never overwritten;
+ * - unreviewed matches that no longer apply are dropped.
+ */
+export function screenPatients(
+  studyId: string,
+  patients: Patient[],
+  existing: StudyMatch[],
+  today: Date,
+): StudyMatch[] {
+  const byPatient = new Map(
+    existing.filter((m) => m.studyId === studyId).map((m) => [m.patientId, m]),
+  );
+  const result: StudyMatch[] = [];
+
+  for (const p of patients) {
+    const prev = byPatient.get(p.id);
+    if (prev && (prev.status === "confirmed" || prev.status === "rejected")) {
+      result.push(prev);
+      continue;
+    }
+    const out = matchPatient({ dateOfBirth: p.dateOfBirth, conditions: p.diagnoses }, today);
+    if (out.status === "no_match") continue;
+    result.push({
+      id: prev?.id ?? `m-${studyId}-${p.id}`,
+      patientId: p.id,
+      studyId,
+      status: out.status,
+      evidence: out.evidence,
+      reason: out.reason,
+      missingInfo: out.missingInfo,
+      reviewedBy: null,
+      contactStatus: "not_contacted",
+      consent: "unknown",
+    });
+  }
+
+  return [...existing.filter((m) => m.studyId !== studyId), ...result];
 }

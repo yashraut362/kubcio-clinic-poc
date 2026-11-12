@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Check, Info, Phone, PhoneCall, RefreshCw, X } from "lucide-react";
-import { patchMatch, runScreening, useClinic } from "@/lib/clinic-store";
-import type { MatchOp } from "@/lib/operations";
+import { useMatches, usePatchMatch, useRunScreening, useStudies } from "@/lib/queries";
+import { useRole } from "@/lib/role";
 import { PageSkeleton } from "@/components/app-shell";
-import { CONSENT_LABEL, ROLE_LABEL, ageText, awaitingReview, digits, needsCall, patientOf } from "@/lib/format";
-import type { ClinicState, Consent, Patient, Study, StudyMatch } from "@/lib/types";
+import { CONSENT_LABEL, ROLE_LABEL, ageLabel, awaitingReview, digits, needsCall } from "@/lib/format";
+import type { DoctorMatch, ReceptionMatch, Study } from "@/lib/types";
+import type { Consent } from "@/lib/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,25 +20,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ConsentPill, ContactPill, MatchStatusPill } from "@/components/status-badges";
-
-/** Runs a PATCH /api/matches/:id operation and reports the outcome. */
-function run(matchId: string, op: MatchOp, success: string) {
-  const res = patchMatch(matchId, op);
-  if (res.ok) toast.success(success);
-  else toast.error(res.error);
-  return res.ok;
-}
+import { ConsentPill, ContactPill, MatchStatusPill, QueryError } from "@/components/status-badges";
 
 export function StudiesScreen() {
-  const clinic = useClinic();
-  if (!clinic) return <PageSkeleton />;
+  const role = useRole();
+  const studies = useStudies();
 
-  // GET /api/studies (one study for the prototype)
-  const study = clinic.studies.find((s) => s.active) ?? clinic.studies[0];
-  // GET /api/studies/:id/matches
-  const matches = clinic.matches.filter((m) => m.studyId === study.id);
+  if (!role || studies.isPending) return <PageSkeleton />;
+  if (studies.isError) return <QueryError error={studies.error} onRetry={() => studies.refetch()} />;
+
+  const study = studies.data.find((s) => s.active) ?? studies.data[0];
+  if (!study) {
+    return <Empty text="No studies yet. In development, use “Reset demo data” in the footer to load the example study." />;
+  }
 
   return (
     <div className="space-y-5">
@@ -46,7 +43,7 @@ export function StudiesScreen() {
           <h1 className="text-2xl font-semibold tracking-tight">Study: {study.name}</h1>
           <p className="text-sm text-muted-foreground">{study.description}</p>
         </div>
-        {clinic.role === "doctor" && <RunScreeningButton study={study} />}
+        {role === "doctor" && <RunScreeningButton study={study} />}
       </div>
 
       <Alert>
@@ -59,13 +56,10 @@ export function StudiesScreen() {
         </AlertDescription>
       </Alert>
 
-      {clinic.role === "doctor" && <DoctorReview clinic={clinic} matches={matches} />}
-      {clinic.role === "reception" && <CallList clinic={clinic} matches={matches} />}
-      {clinic.role === "nurse" && (
-        <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Doctors review study matches and reception makes the calls. Switch to Doctor or Reception
-          to see those views.
-        </p>
+      {role === "doctor" && <DoctorReview studyId={study.id} />}
+      {role === "reception" && <CallList studyId={study.id} />}
+      {role === "nurse" && (
+        <Empty text="Doctors review study matches and reception makes the calls. Switch to Doctor or Reception to see those views." />
       )}
     </div>
   );
@@ -73,30 +67,45 @@ export function StudiesScreen() {
 
 /** POST /api/studies/:id/screen */
 function RunScreeningButton({ study }: { study: Study }) {
+  const screen = useRunScreening();
   return (
     <Button
       size="sm"
       variant="outline"
-      onClick={() => {
-        const res = runScreening(study.id);
-        if (res.ok) toast.success(`Screening complete: ${res.value} waiting for review`);
-        else toast.error(res.error);
-      }}
+      disabled={screen.isPending || !study.active}
+      onClick={() =>
+        screen.mutate(study.id, {
+          onSuccess: (r) => toast.success(`Screened ${r.screened} patients: ${r.awaitingReview} waiting for review`),
+        })
+      }
     >
-      <RefreshCw aria-hidden />
-      Run screening
+      <RefreshCw aria-hidden className={screen.isPending ? "animate-spin" : undefined} />
+      {screen.isPending ? "Screening…" : "Run screening"}
     </Button>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-28 w-full" />
+      <Skeleton className="h-28 w-full" />
+    </div>
   );
 }
 
 // ---------------------------------------------------------------- Doctor
 
-function DoctorReview({ clinic, matches }: { clinic: ClinicState; matches: StudyMatch[] }) {
-  const pending = matches
+function DoctorReview({ studyId }: { studyId: string }) {
+  const matches = useMatches<DoctorMatch>(studyId);
+  if (matches.isPending) return <ListSkeleton />;
+  if (matches.isError) return <QueryError error={matches.error} onRetry={() => matches.refetch()} />;
+
+  const pending = matches.data
     .filter(awaitingReview)
     // Possible matches first, then the ones needing a check.
     .sort((a, b) => (a.status === b.status ? 0 : a.status === "possible_match" ? -1 : 1));
-  const reviewed = matches.filter((m) => !awaitingReview(m));
+  const reviewed = matches.data.filter((m) => !awaitingReview(m));
 
   return (
     <Tabs defaultValue="pending">
@@ -106,9 +115,9 @@ function DoctorReview({ clinic, matches }: { clinic: ClinicState; matches: Study
       </TabsList>
 
       <TabsContent value="pending" className="mt-4 space-y-3">
-        {pending.length === 0 && <Empty text="Nothing waiting for review." />}
+        {pending.length === 0 && <Empty text="Nothing waiting for review. Run screening to check for new matches." />}
         {pending.map((m) => (
-          <ReviewCard key={m.id} match={m} patient={patientOf(clinic, m.patientId)} />
+          <ReviewCard key={m.id} match={m} />
         ))}
       </TabsContent>
 
@@ -118,8 +127,8 @@ function DoctorReview({ clinic, matches }: { clinic: ClinicState; matches: Study
           <div key={m.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{patientOf(clinic, m.patientId).name}</span>
-                <MatchStatusPill match={m} />
+                <span className="font-medium">{m.patient.name}</span>
+                <MatchStatusPill status={m.status} />
               </div>
               <p className="text-sm text-muted-foreground">
                 {m.evidence ? `“${m.evidence}”` : m.reason}
@@ -139,8 +148,22 @@ function DoctorReview({ clinic, matches }: { clinic: ClinicState; matches: Study
   );
 }
 
-function ReviewCard({ match, patient }: { match: StudyMatch; patient: Patient }) {
+function ReviewCard({ match }: { match: DoctorMatch }) {
+  const patch = usePatchMatch();
   const needsChecking = match.status === "needs_checking";
+
+  const review = (decision: "confirmed" | "rejected") =>
+    patch.mutate(
+      { id: match.id, op: { type: "review", decision } },
+      {
+        onSuccess: () =>
+          toast.success(
+            decision === "confirmed"
+              ? `${match.patient.name} confirmed and added to reception's call list`
+              : `${match.patient.name} rejected for this study`,
+          ),
+      },
+    );
 
   return (
     <article
@@ -151,9 +174,9 @@ function ReviewCard({ match, patient }: { match: StudyMatch; patient: Patient })
       }
     >
       <header className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{patient.name}</h3>
-        <span className="text-sm text-muted-foreground">{ageText(patient)}</span>
-        <MatchStatusPill match={match} />
+        <h3 className="font-medium">{match.patient.name}</h3>
+        <span className="text-sm text-muted-foreground">{ageLabel(match.patient.age)}</span>
+        <MatchStatusPill status={match.status} />
       </header>
 
       <p className="text-sm">{match.reason}</p>
@@ -177,20 +200,11 @@ function ReviewCard({ match, patient }: { match: StudyMatch; patient: Patient })
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          onClick={() =>
-            run(match.id, { type: "review", decision: "confirmed" }, `${patient.name} confirmed and added to reception's call list`)
-          }
-        >
+        <Button size="sm" disabled={patch.isPending} onClick={() => review("confirmed")}>
           <Check aria-hidden />
           Confirm match
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => run(match.id, { type: "review", decision: "rejected" }, `${patient.name} rejected for this study`)}
-        >
+        <Button size="sm" variant="outline" disabled={patch.isPending} onClick={() => review("rejected")}>
           <X aria-hidden />
           Reject
         </Button>
@@ -201,13 +215,17 @@ function ReviewCard({ match, patient }: { match: StudyMatch; patient: Patient })
 
 // ---------------------------------------------------------------- Reception
 
-function CallList({ clinic, matches }: { clinic: ClinicState; matches: StudyMatch[] }) {
-  const [calling, setCalling] = useState<StudyMatch | null>(null);
-  const confirmed = matches.filter((m) => m.status === "confirmed");
-  const toCall = confirmed.filter(needsCall);
-  const finished = confirmed.filter((m) => !needsCall(m));
+function CallList({ studyId }: { studyId: string }) {
+  const matches = useMatches<ReceptionMatch>(studyId);
+  const [calling, setCalling] = useState<ReceptionMatch | null>(null);
 
-  const rows = (list: StudyMatch[], empty: string) =>
+  if (matches.isPending) return <ListSkeleton />;
+  if (matches.isError) return <QueryError error={matches.error} onRetry={() => matches.refetch()} />;
+
+  const toCall = matches.data.filter(needsCall);
+  const finished = matches.data.filter((m) => !needsCall(m));
+
+  const rows = (list: ReceptionMatch[], empty: string) =>
     list.length === 0 ? (
       <Empty text={empty} />
     ) : (
@@ -225,35 +243,32 @@ function CallList({ clinic, matches }: { clinic: ClinicState; matches: StudyMatc
             </tr>
           </thead>
           <tbody>
-            {list.map((m) => {
-              const p = patientOf(clinic, m.patientId);
-              return (
-                <tr key={m.id} className="border-t">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-muted-foreground">Confirmed by doctor</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <a href={`tel:${digits(p.phone)}`} className="inline-flex items-center gap-1.5 tabular-nums hover:underline">
-                      <Phone className="size-3.5 text-muted-foreground" aria-hidden />
-                      {p.phone}
-                    </a>
-                  </td>
-                  <td className="px-4 py-3">
-                    <ContactPill status={m.contactStatus} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <ConsentPill consent={m.consent} />
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Button size="sm" variant={needsCall(m) ? "default" : "outline"} onClick={() => setCalling(m)}>
-                      <PhoneCall aria-hidden />
-                      Record call
-                    </Button>
-                  </td>
-                </tr>
-              );
-            })}
+            {list.map((m) => (
+              <tr key={m.id} className="border-t">
+                <td className="px-4 py-3">
+                  <div className="font-medium">{m.patient.name}</div>
+                  <div className="text-xs text-muted-foreground">Confirmed by doctor</div>
+                </td>
+                <td className="px-4 py-3">
+                  <a href={`tel:${digits(m.patient.phone)}`} className="inline-flex items-center gap-1.5 tabular-nums hover:underline">
+                    <Phone className="size-3.5 text-muted-foreground" aria-hidden />
+                    {m.patient.phone}
+                  </a>
+                </td>
+                <td className="px-4 py-3">
+                  <ContactPill status={m.contactStatus} />
+                </td>
+                <td className="px-4 py-3">
+                  <ConsentPill consent={m.consent} />
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <Button size="sm" variant={needsCall(m) ? "default" : "outline"} onClick={() => setCalling(m)}>
+                    <PhoneCall aria-hidden />
+                    Record call
+                  </Button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -274,50 +289,46 @@ function CallList({ clinic, matches }: { clinic: ClinicState; matches: StudyMatc
         </TabsContent>
       </Tabs>
 
-      <RecordCallDialog
-        key={calling?.id}
-        match={calling}
-        patient={calling ? patientOf(clinic, calling.patientId) : null}
-        onClose={() => setCalling(null)}
-      />
+      <RecordCallDialog key={calling?.id} match={calling} onClose={() => setCalling(null)} />
     </>
   );
 }
 
-function RecordCallDialog({
-  match,
-  patient,
-  onClose,
-}: {
-  match: StudyMatch | null;
-  patient: Patient | null;
-  onClose: () => void;
-}) {
+/** PATCH /api/matches/:id { type: "record_contact" } */
+function RecordCallDialog({ match, onClose }: { match: ReceptionMatch | null; onClose: () => void }) {
+  const patch = usePatchMatch();
   const [reached, setReached] = useState<"yes" | "no" | "">("");
   const [consent, setConsent] = useState<Consent | "">("");
   const valid = reached === "no" || (reached === "yes" && consent !== "");
 
   const submit = () => {
-    if (!match || !patient || !valid) return;
-    const ok =
-      reached === "yes"
-        ? run(
-            match.id,
-            { type: "record_contact", contactStatus: "reached", consent: consent as Consent },
-            `${patient.name}: reached, ${CONSENT_LABEL[consent as Consent].toLowerCase()}`,
-          )
-        : run(
-            match.id,
-            { type: "record_contact", contactStatus: "not_reached", consent: match.consent },
-            `${patient.name}: not reached`,
+    if (!match || !valid) return;
+    const name = match.patient.name;
+    patch.mutate(
+      {
+        id: match.id,
+        op:
+          reached === "yes"
+            ? { type: "record_contact", contactStatus: "reached", consent: consent as Consent }
+            : { type: "record_contact", contactStatus: "not_reached", consent: match.consent },
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            reached === "yes"
+              ? `${name}: reached, ${CONSENT_LABEL[consent as Consent].toLowerCase()}`
+              : `${name}: not reached`,
           );
-    if (ok) onClose();
+          onClose();
+        },
+      },
+    );
   };
 
   return (
     <Dialog open={Boolean(match)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
-        {match && patient && (
+        {match && (
           <form
             className="grid gap-5"
             onSubmit={(e) => {
@@ -326,8 +337,8 @@ function RecordCallDialog({
             }}
           >
             <DialogHeader>
-              <DialogTitle>Record call: {patient.name}</DialogTitle>
-              <DialogDescription>{patient.phone}</DialogDescription>
+              <DialogTitle>Record call: {match.patient.name}</DialogTitle>
+              <DialogDescription>{match.patient.phone}</DialogDescription>
             </DialogHeader>
 
             <fieldset className="space-y-2">
@@ -353,8 +364,8 @@ function RecordCallDialog({
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!valid}>
-                Save
+              <Button type="submit" disabled={!valid || patch.isPending}>
+                {patch.isPending ? "Saving…" : "Save"}
               </Button>
             </DialogFooter>
           </form>
