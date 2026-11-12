@@ -65,7 +65,7 @@ export const PATCH = route(async (req: NextRequest, ctx: RouteContext<"/api/visi
   const updated = await VisitModel.findOneAndUpdate(
     { _id: id, stage: current.stage },
     { $set: { stage, vitals, doctorNotes, followUp, testOrdered } },
-    { new: true, runValidators: true },
+    { returnDocument: "after", runValidators: true },
   );
   if (!updated) throw new ApiError(409, "This visit was just updated by someone else. Reload and try again.");
   return Response.json({ visit: toApi<Visit>(updated) });

@@ -25,7 +25,7 @@ export const PATCH = route(async (req: NextRequest, ctx: RouteContext<"/api/matc
   const updated = await StudyMatchModel.findOneAndUpdate(
     { _id: id, status: current.status },
     { $set: { status, reviewedBy, contactStatus, consent } },
-    { new: true, runValidators: true },
+    { returnDocument: "after", runValidators: true },
   );
   if (!updated) throw new ApiError(409, "This match was just updated by someone else. Reload and try again.");
   return Response.json({ match: toApi<StudyMatch>(updated) });

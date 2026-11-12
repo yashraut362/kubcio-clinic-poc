@@ -1,7 +1,8 @@
-// Run with: npm run test  (uses Node's built-in test runner + TypeScript stripping)
-import { test } from "node:test";
+// Run with: npm run test:unit
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import { ageOn, matchPatient, type MatchInput } from "./study-matcher.ts";
+import { ageOn, matchPatient, screenPatients, type MatchInput } from "./study-matcher.ts";
+import type { Patient, StudyMatch } from "./types";
 
 const TODAY = new Date(2026, 10, 12); // 12 Nov 2026
 const ADULT_DOB = "1970-05-01";
@@ -117,4 +118,86 @@ test("ageOn handles birthdays correctly", () => {
   assert.equal(ageOn("2000-11-12", TODAY), 26);
   assert.equal(ageOn("2000-11-13", TODAY), 25);
   assert.equal(ageOn(null, TODAY), null);
+});
+
+// ---------- screenPatients ----------
+
+const patient = (id: string, diagnoses: string[], dateOfBirth: string | null = ADULT_DOB): Patient => ({
+  id,
+  name: id,
+  phone: id,
+  dateOfBirth,
+  diagnoses,
+  medications: [],
+  allergies: [],
+});
+
+test("screening flags only matching patients, with evidence and a fresh contact state", () => {
+  const out = screenPatients(
+    "s1",
+    [patient("maria", ["Type 2 diabetes"]), patient("james", ["Asthma"]), patient("tom", ["T2DM"], null)],
+    [],
+    TODAY,
+  );
+  assert.deepEqual(
+    out.map((m) => [m.patientId, m.status]),
+    [["maria", "possible_match"], ["tom", "needs_checking"]],
+  );
+  const maria = out[0];
+  assert.equal(maria.evidence, "Type 2 diabetes");
+  assert.equal(maria.contactStatus, "not_contacted");
+  assert.equal(maria.consent, "unknown");
+  assert.equal(maria.reviewedBy, null);
+});
+
+test("screening never overwrites a doctor's decision", () => {
+  const reviewed: StudyMatch = {
+    id: "m1",
+    patientId: "maria",
+    studyId: "s1",
+    status: "confirmed",
+    evidence: "Type 2 diabetes",
+    reason: "",
+    missingInfo: [],
+    reviewedBy: "doctor",
+    contactStatus: "reached",
+    consent: "consented",
+  };
+  // Even if the record changed so it would no longer match, the review stands.
+  const out = screenPatients("s1", [patient("maria", ["Asthma"])], [reviewed], TODAY);
+  assert.deepEqual(out, [reviewed]);
+});
+
+test("screening drops unreviewed matches that no longer apply", () => {
+  const stale: StudyMatch = {
+    id: "m2",
+    patientId: "grace",
+    studyId: "s1",
+    status: "needs_checking",
+    evidence: "Suspected diabetes",
+    reason: "",
+    missingInfo: [],
+    reviewedBy: null,
+    contactStatus: "not_contacted",
+    consent: "unknown",
+  };
+  const out = screenPatients("s1", [patient("grace", ["Migraine"])], [stale], TODAY);
+  assert.deepEqual(out, []);
+});
+
+test("screening one study leaves other studies' matches alone", () => {
+  const other: StudyMatch = {
+    id: "m3",
+    patientId: "maria",
+    studyId: "s2",
+    status: "possible_match",
+    evidence: "x",
+    reason: "",
+    missingInfo: [],
+    reviewedBy: null,
+    contactStatus: "not_contacted",
+    consent: "unknown",
+  };
+  const out = screenPatients("s1", [patient("maria", ["Asthma"])], [other], TODAY);
+  assert.deepEqual(out, [other]);
 });

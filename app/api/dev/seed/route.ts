@@ -6,9 +6,13 @@ import { createSeedData } from "@/lib/seed-data";
 /**
  * POST /api/dev/seed  (development only, not part of the LLD API)
  * Wipes the 4 collections and loads the synthetic demo data. All people are fictional.
+ * Disabled in production unless ENABLE_DEV_SEED=true (used by the e2e test server,
+ * which runs against a throwaway in-memory database).
  */
 export const POST = route(async () => {
-  if (process.env.NODE_ENV === "production") throw new ApiError(404, "Not found.");
+  if (process.env.NODE_ENV === "production" && process.env.ENABLE_DEV_SEED !== "true") {
+    throw new ApiError(404, "Not found.");
+  }
 
   const s = createSeedData(new Date());
   // Seed data uses readable keys ("p-maria"); give each one a stable ObjectId.

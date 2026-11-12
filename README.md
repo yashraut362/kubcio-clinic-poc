@@ -15,7 +15,7 @@ All data is **synthetic**. These are fictional patients, not real people.
 | 2. Database | Put your MongoDB connection string in `.env.local` as `MONGODB_URI=...` (see `.env.example`) |
 | 3. Start | `npm run dev`, then open http://localhost:3000 |
 | 4. Load demo data | Click **Reset demo data** in the footer (development only; wipes and reloads the data) |
-| 5. Unit tests | `npm test` (study matching rules) |
+| 5. Tests | See [Tests](#tests) |
 
 There's no login. Pick a role with **Viewing as** in the top bar. The server still checks what each role is allowed to do.
 
@@ -92,6 +92,18 @@ How the text is read:
 | Hannah Brooks | Family history of diabetes | No match |
 | Ewa Kowalska | Diabetes insipidus | No match |
 | James Carter | Asthma | No match |
+
+## Tests
+
+None of the tests touch your real database: the API and browser tests use a throwaway in-memory MongoDB.
+
+| Layer | Command | What it checks | Files |
+|---|---|---|---|
+| Unit | `npm run test:unit` | Matching rules, screening, and the visit/study rules: who can do what at which stage, checkout blocked until the follow-up is booked, consent never set without an answer | `lib/*.test.ts` |
+| API | `npm run test:api` | The real API: roles enforced on the server, reception never sees clinical data, input errors, duplicates, two staff acting at once | `tests/api/` |
+| Browser | `npm run test:e2e` | The full happy path in a real browser: check-in → nurse → doctor → checkout → doctor confirms the study match → reception records a missed call, then consent | `tests/e2e/` |
+
+`npm test` runs the unit and API tests together. The browser test builds the app first. On the first run, it needs `npx playwright install chromium`.
 
 ## Not built yet
 
