@@ -29,9 +29,10 @@ export type MatchOp =
   | { type: "review"; decision: "confirmed" | "rejected" }
   | { type: "record_contact"; contactStatus: Exclude<ContactStatus, "not_contacted">; consent: Consent };
 
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+/** `status` is the HTTP code the API returns for a failure (403 role, 409 state, 422 input). */
+export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number };
 
-const fail = (error: string): Result<never> => ({ ok: false, error });
+const fail = (error: string, status = 409): Result<never> => ({ ok: false, error, status });
 const ok = <T>(value: T): Result<T> => ({ ok: true, value });
 
 /** Which role may run each visit operation, and from which stage. */
@@ -63,7 +64,7 @@ function applyDoctor(v: Visit, input: DoctorInput): Visit {
 
 export function applyVisitOp(role: Role, v: Visit, op: VisitOp): Result<Visit> {
   const rule = VISIT_RULES[op.type];
-  if (role !== rule.role) return fail(`Only the ${rule.role} can do this.`);
+  if (role !== rule.role) return fail(`Only the ${rule.role} can do this.`, 403);
   if (v.stage !== rule.stage) return fail("This patient has moved on to another stage.");
 
   switch (op.type) {
@@ -76,7 +77,7 @@ export function applyVisitOp(role: Role, v: Visit, op: VisitOp): Result<Visit> {
     case "save_doctor":
       return ok(applyDoctor(v, op));
     case "send_to_checkout":
-      if (op.followUp.needed && !op.followUp.weeks) return fail("Choose when the follow-up is needed.");
+      if (op.followUp.needed && !op.followUp.weeks) return fail("Choose when the follow-up is needed.", 422);
       return ok({ ...applyDoctor(v, op), stage: "checkout" });
     case "back_to_nurse":
       return ok({ ...applyDoctor(v, op), stage: "with_nurse" });
@@ -92,20 +93,20 @@ export function applyVisitOp(role: Role, v: Visit, op: VisitOp): Result<Visit> {
 export function applyMatchOp(role: Role, m: StudyMatch, op: MatchOp): Result<StudyMatch> {
   switch (op.type) {
     case "review":
-      if (role !== "doctor") return fail("Only a doctor can review a study match.");
+      if (role !== "doctor") return fail("Only a doctor can review a study match.", 403);
       if (m.status !== "possible_match" && m.status !== "needs_checking") {
         return fail("This match has already been reviewed.");
       }
       return ok({ ...m, status: op.decision, reviewedBy: role });
 
     case "record_contact":
-      if (role !== "reception") return fail("Only reception records calls.");
+      if (role !== "reception") return fail("Only reception records calls.", 403);
       if (m.status !== "confirmed") return fail("Only doctor-confirmed matches can be called.");
       // Consent can only come from a conversation: not reaching someone never changes it.
       if (op.contactStatus === "not_reached") {
         return ok({ ...m, contactStatus: m.contactStatus === "reached" ? "reached" : "not_reached" });
       }
-      if (op.consent === "unknown") return fail("Record what the patient said about the study.");
+      if (op.consent === "unknown") return fail("Record what the patient said about the study.", 422);
       return ok({ ...m, contactStatus: "reached", consent: op.consent });
   }
 }
