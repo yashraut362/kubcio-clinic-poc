@@ -1,5 +1,39 @@
 # Clinic POC
 
+## Quick start
+
+You need **Node.js 20.9 or newer** (developed on Node 24), npm, and a **MongoDB** connection string (for example, a free MongoDB Atlas cluster).
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Create your env file, then set MONGODB_URI in .env.local
+cp .env.example .env.local
+
+# 3. Start the app on http://localhost:3000
+npm run dev
+
+# 4. In a second terminal: load the synthetic demo data
+#    (wipes and reloads the 4 clinic collections; works in development only)
+curl -X POST http://localhost:3000/api/dev/seed
+```
+
+Instead of step 4, you can click **Reset demo data** in the app's footer. Then pick a role with **Viewing as** in the top bar.
+
+```bash
+# Tests (use a throwaway in-memory MongoDB, never your real database)
+npm test                            # unit + API tests
+npx playwright install chromium     # once, before the first browser test run
+npm run test:e2e                    # builds the app, then runs the browser test
+
+# Checks and production build
+npm run lint
+npm run build && npm start          # the seed endpoint is disabled in production
+```
+
+---
+
 A prototype for a small clinic that does two things:
 
 1. **Visit handoff:** follow a patient from check-in through the nurse and doctor to checkout, without losing track of them.
